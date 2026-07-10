@@ -206,13 +206,75 @@ class MeleeOrchestrator:
             toward = 1.0 if p.position.x >= 0 else 0.0
             ctrl.tilt_analog(melee.Button.BUTTON_MAIN, toward, 0.5)
 
+    @staticmethod
+    def _tap_b(ctrl: melee.Controller):
+        """Press B as a clean single tap (alternating press/release frames).
+
+        Never *hold* B: held down it backs all the way out of a menu (CSS ->
+        main menu). Alternating gives a fresh press edge every other frame,
+        which is what Melee reads as a discrete B press.
+        """
+        if ctrl.prev.button[melee.Button.BUTTON_B]:
+            ctrl.release_button(melee.Button.BUTTON_B)
+        else:
+            ctrl.release_all()
+            ctrl.press_button(melee.Button.BUTTON_B)
+
+    def _park_idle(self, gs: melee.GameState):
+        """Idle at CSS with all four controllers present but nobody locked in.
+
+        Called every CSS frame when no match is queued (fresh boot, or right
+        after a match ends). We never press A or START here, so the game can't
+        leave CSS until the lobby queues a match. Two things to keep clean:
+
+        - A cursor that drifted onto the CPU-level slider reports
+          is_holding_cpu_slider; release_all drops the grab.
+        - Returning from a match restores the previous CSS with every token
+          still placed (coin_down). Tap B to reclaim each coin so nobody is
+          committed.
+        """
+        for port, ctrl in self._controllers.items():
+            p = gs.players.get(port)
+            if p is None or p.is_holding_cpu_slider:
+                ctrl.release_all()
+                continue
+            if p.coin_down:
+                self._tap_b(ctrl)
+                continue
+            ctrl.release_all()
+
     async def _handle_frame(self, gs: melee.GameState):
         menu = gs.menu_state
+
+        # A forced end (admin "END MATCH") leaves IN_GAME the instant Melee ends
+        # the match — and it drops us straight back at CHARACTER_SELECT, NOT
+        # POSTGAME_SCORES (confirmed from logs). Clear the force-end state as
+        # soon as we're out of the game at any menu; otherwise _active_players
+        # lingers and the CSS/stage branches below re-select the same roster and
+        # drive us right back into a new match (the "stuck at stage select" bug).
+        if self._force_end and menu != melee.Menu.IN_GAME:
+            log.info("Forced end complete at %s — resetting to idle CSS",
+                     getattr(menu, "name", menu))
+            self._force_end       = False
+            self._active_players  = None
+            self._pending_players = None
+            self._actions         = {p: None for p in PORTS}
+            self.state.reset()
 
         # On any menu transition, flush held inputs once. Entering CSS with A
         # still held (from mashing through the main menu) is how a cursor
         # accidentally grabs the CPU slider or the HMN/CPU toggle.
         if menu != self._prev_menu:
+            coins = {p: getattr(pl, "coin_down", None) for p, pl in gs.players.items()}
+            log.info(
+                "MENU %s -> %s | frame=%s ready_to_start=%s force_end=%s "
+                "pending=%s active=%s coin_down=%s",
+                getattr(self._prev_menu, "name", self._prev_menu),
+                getattr(menu, "name", menu), gs.frame,
+                getattr(gs, "ready_to_start", "?"), self._force_end,
+                self._pending_players is not None,
+                self._active_players is not None, coins,
+            )
             self._prev_menu = menu
             for ctrl in self._controllers.values():
                 ctrl.release_all()
@@ -221,22 +283,13 @@ class MeleeOrchestrator:
         if menu == melee.Menu.CHARACTER_SELECT:
             players = self._pending_players or self._active_players
             if players is None:
-                # No match queued: park P1's cursor on a default character so
-                # we sit ready at CSS (start=False, so nothing begins). The
-                # slider-grab guard still applies while idling.
-                p1_state = gs.players.get(PORTS[0])
-                if p1_state is not None and p1_state.is_holding_cpu_slider:
-                    self._controllers[PORTS[0]].release_all()
-                    return
-                self._menu_helpers[PORTS[0]].choose_character(
-                    character=IDLE_CHARACTER,
-                    gamestate=gs,
-                    controller=self._controllers[PORTS[0]],
-                    cpu_level=0,
-                    costume=0,
-                    swag=False,
-                    start=False,
-                )
+                # No match queued: keep all four controllers present at CSS
+                # with nobody locked in, waiting for the lobby to queue a match.
+                # While no player is committed Melee can't advance past CSS, so
+                # an ended match parks here instead of sliding into stage
+                # select, and a fresh boot shows four idle controllers rather
+                # than P1 pre-selecting a character. See _park_idle.
+                self._park_idle(gs)
                 return
             for i, p in enumerate(players):
                 p_state = gs.players.get(p.port)
@@ -277,6 +330,17 @@ class MeleeOrchestrator:
         elif menu == melee.Menu.STAGE_SELECT:
             players = self._pending_players or self._active_players
             if players is None:
+                # No match queued but we slipped into stage select — e.g. a
+                # START press carried over from skipping the postgame scores
+                # onto a still-locked-in CSS. Tap B on every controller to back
+                # out to CSS (any port can cancel the stage pick), then wait
+                # there; _park_idle clears the leftover tokens so it can't
+                # happen again.
+                if gs.frame % 30 == 0:
+                    log.info("STAGE_SELECT with no match — tapping B to back out "
+                             "(frame=%s)", gs.frame)
+                for ctrl in self._controllers.values():
+                    self._tap_b(ctrl)
                 return
             char = CHARACTER_MAP.get(players[0].character, melee.Character.FOX)
             self._menu_helpers[PORTS[0]].choose_stage(
@@ -290,7 +354,8 @@ class MeleeOrchestrator:
         elif menu == melee.Menu.IN_GAME:
             # Force-ending (stop pressed): ignore bots and walk everyone off the
             # stage until Melee ends the match itself. Scores still tick so the
-            # watch page reflects the wind-down; state resets at POSTGAME_SCORES.
+            # watch page reflects the wind-down; state resets the moment we
+            # leave IN_GAME (see the force-end check at the top of _handle_frame).
             if self._force_end:
                 self._update_scores(gs)
                 self._drive_self_destruct(gs)
@@ -318,13 +383,9 @@ class MeleeOrchestrator:
                     await self._apply(self._controllers[p.port], actions.get(p.port))
 
         elif menu == melee.Menu.POSTGAME_SCORES:
-            if self._force_end:
-                # Forced end reached the scores screen — clear back to IDLE so
-                # the lobby is usable again, then walk the menus to CSS and idle.
-                self._force_end = False
-                self._actions   = {p: None for p in PORTS}
-                self.state.reset()
-            elif self.state.phase == Phase.IN_GAME:
+            # (A forced end is already cleared to IDLE at the top of the frame,
+            # before we ever get here — so this only handles a natural finish.)
+            if self.state.phase == Phase.IN_GAME:
                 self.state.phase = Phase.POSTGAME
             self._menu_helpers[PORTS[0]].menu_helper_simple(
                 gamestate=gs,

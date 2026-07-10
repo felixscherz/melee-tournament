@@ -15,6 +15,14 @@
       display: flex; align-items: center; justify-content: space-between;
     }
     header h1 { font-size: 1.2rem; color: #e94560; letter-spacing: 3px; }
+    header .right { display: flex; align-items: center; gap: 1rem; }
+    nav { display: flex; gap: 0.5rem; }
+    nav a {
+      text-decoration: none; color: #9090c0; font-size: 0.8rem; letter-spacing: 1px;
+      padding: 0.4rem 1rem; border-radius: 4px; background: #2a2a4a; transition: background 0.2s, color 0.2s;
+    }
+    nav a:hover { background: #35355a; color: #c0c0e0; }
+    nav a.active { background: #e94560; color: #fff; }
     .live-badge {
       background: #e94560; color: #fff; font-size: 0.65rem;
       padding: 2px 8px; border-radius: 3px;
@@ -83,7 +91,14 @@
 <body>
 <header>
   <h1>⚔ SMASH TOURNAMENT</h1>
-  <span class="live-badge" id="live-badge">LIVE</span>
+  <div class="right">
+    <nav>
+      <a href="/lobby">LOBBY</a>
+      <a href="/watch" class="active">WATCH</a>
+      <a href="/admin">ADMIN</a>
+    </nav>
+    <span class="live-badge" id="live-badge">LIVE</span>
+  </div>
 </header>
 
 <div id="player_id"></div>

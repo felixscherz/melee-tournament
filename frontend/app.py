@@ -74,6 +74,7 @@ async def lobby(request: Request):
     return templates.TemplateResponse(request, "lobby.html", {
         "characters": SUPPORTED_CHARACTERS,
         "phase": app_state.phase.value,
+        "webrtc_url": _webrtc_url(),
     })
 
 

@@ -12,9 +12,16 @@
       background: #1a1a2e;
       padding: 1.2rem 2rem;
       border-bottom: 2px solid #e94560;
-      display: flex; align-items: center; gap: 1rem;
+      display: flex; align-items: center; gap: 1.5rem;
     }
     header h1 { font-size: 1.5rem; color: #e94560; letter-spacing: 3px; }
+    nav { display: flex; gap: 0.5rem; margin-left: auto; }
+    nav a {
+      text-decoration: none; color: #9090c0; font-size: 0.8rem; letter-spacing: 1px;
+      padding: 0.4rem 1rem; border-radius: 4px; background: #2a2a4a; transition: background 0.2s, color 0.2s;
+    }
+    nav a:hover { background: #35355a; color: #c0c0e0; }
+    nav a.active { background: #e94560; color: #fff; }
 
     main { max-width: 640px; margin: 2rem auto; padding: 0 1.5rem; }
 
@@ -51,15 +58,6 @@
     .btn-restart { background: #4f8fc3; color: #fff; }
     .btn-restart:hover:not(:disabled) { background: #3a7098; }
 
-    .links { display: flex; gap: 0.9rem; }
-    .links a {
-      flex: 1; text-align: center; text-decoration: none;
-      padding: 0.65rem 1rem; border-radius: 6px;
-      background: #2a2a4a; color: #9090c0;
-      font-size: 0.82rem; letter-spacing: 1px; transition: background 0.2s;
-    }
-    .links a:hover { background: #35355a; color: #c0c0e0; }
-
     #status { text-align: center; margin-top: 0.4rem; font-size: 0.82rem; color: #6060a0; min-height: 1.2rem; }
     #status.ok  { color: #81c784; }
     #status.err { color: #e94560; }
@@ -68,6 +66,11 @@
 <body>
 <header>
   <h1>⚔ ADMIN</h1>
+  <nav>
+    <a href="/lobby">LOBBY</a>
+    <a href="/watch">WATCH</a>
+    <a href="/admin" class="active">ADMIN</a>
+  </nav>
 </header>
 <main>
   <h2>MATCH CONTROL</h2>
@@ -81,10 +84,6 @@
 
   <div class="card">
     <button class="btn btn-stop" id="stop-btn" onclick="stopMatch()">END MATCH &amp; RETURN TO LOBBY</button>
-    <div class="links">
-      <a href="/lobby">LOBBY</a>
-      <a href="/watch">WATCH</a>
-    </div>
   </div>
 
   <div id="status"></div>

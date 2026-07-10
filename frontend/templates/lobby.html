@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Smash Tournament — Lobby</title>
+  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; min-height: 100vh; }
@@ -12,9 +13,20 @@
       background: #1a1a2e;
       padding: 1.2rem 2rem;
       border-bottom: 2px solid #e94560;
-      display: flex; align-items: center; gap: 1rem;
+      display: flex; align-items: center; gap: 1.5rem;
     }
     header h1 { font-size: 1.5rem; color: #e94560; letter-spacing: 3px; }
+    nav { display: flex; gap: 0.5rem; margin-left: auto; }
+    nav a {
+      text-decoration: none; color: #9090c0; font-size: 0.8rem; letter-spacing: 1px;
+      padding: 0.4rem 1rem; border-radius: 4px; background: #2a2a4a; transition: background 0.2s, color 0.2s;
+    }
+    nav a:hover { background: #35355a; color: #c0c0e0; }
+    nav a.active { background: #e94560; color: #fff; }
+
+    .stream-wrap { max-width: 1100px; margin: 1.5rem auto 0; padding: 0 1.5rem; }
+    .stream-wrap h2 { margin-bottom: 0.8rem; }
+    #lobby_stream { width: 100%; aspect-ratio: 16/9; background: #000; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; }
 
     main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
 
@@ -115,7 +127,18 @@
 <body>
 <header>
   <h1>⚔ SMASH TOURNAMENT</h1>
+  <nav>
+    <a href="/lobby" class="active">LOBBY</a>
+    <a href="/watch">WATCH</a>
+    <a href="/admin">ADMIN</a>
+  </nav>
 </header>
+
+<div class="stream-wrap">
+  <h2>LIVE STREAM</h2>
+  <div id="lobby_stream"></div>
+</div>
+
 <main>
   <h2>LOBBY — SELECT YOUR FIGHTERS</h2>
   <div class="grid" id="player-grid">
@@ -208,6 +231,15 @@
 </main>
 
 <script>
+// Live OBS stream embed — the same feed shown on /watch. Dolphin/OBS run
+// continuously, so the stream is available even before a match starts.
+OvenPlayer.create('lobby_stream', {
+  sources: [{ label: 'WebRTC', type: 'webrtc', file: '{{ webrtc_url }}' }],
+  autoStart: true,
+  mute: true,
+  webrtcConfig: { timeoutMaxRetry: 4, connectionTimeout: 10000, playoutDelayHint: 0 },
+});
+
 const charDescriptions = {
   FOX:    "Pure aggression — chases and up-smashes relentlessly.",
   MARTH:  "Spacing game — forward-smashes from tipper range.",
