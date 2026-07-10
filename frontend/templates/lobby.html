@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smash Tournament — Lobby</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; min-height: 100vh; }
+
+    header {
+      background: #1a1a2e;
+      padding: 1.2rem 2rem;
+      border-bottom: 2px solid #e94560;
+      display: flex; align-items: center; gap: 1rem;
+    }
+    header h1 { font-size: 1.5rem; color: #e94560; letter-spacing: 3px; }
+
+    main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
+
+    h2 { text-align: center; font-size: 1rem; color: #6060a0; letter-spacing: 2px; margin-bottom: 1.5rem; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      padding: 1.4rem;
+      display: flex; flex-direction: column; gap: 0.9rem;
+      transition: border-color 0.2s;
+    }
+    .card:focus-within { border-color: #e94560; }
+
+    .card-header { display: flex; align-items: center; gap: 0.6rem; }
+    .port-badge {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.8rem; font-weight: bold; flex-shrink: 0;
+    }
+    .p1 { background: #4fc3f7; color: #000; }
+    .p2 { background: #ef9a9a; color: #000; }
+    .p3 { background: #a5d6a7; color: #000; }
+    .p4 { background: #ffe082; color: #000; }
+    .card-header span { font-size: 0.85rem; color: #9090b0; letter-spacing: 1px; }
+
+    label { font-size: 0.72rem; color: #6060a0; letter-spacing: 1px; display: block; margin-bottom: 0.25rem; }
+    input[type=text], select {
+      width: 100%; padding: 0.5rem 0.7rem;
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
+      color: #e0e0e0; font-family: inherit; font-size: 0.85rem;
+      outline: none; transition: border-color 0.2s;
+    }
+    input[type=text]:focus, select:focus { border-color: #e94560; }
+
+    .char-info {
+      font-size: 0.72rem; color: #5050a0; min-height: 1rem;
+      font-style: italic;
+    }
+
+    .start-row { margin-top: 1.5rem; display: flex; justify-content: center; }
+    button#start-btn {
+      padding: 0.75rem 3rem;
+      background: #e94560; color: #fff; border: none; border-radius: 6px;
+      font-family: inherit; font-size: 1rem; font-weight: bold; letter-spacing: 2px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    button#start-btn:hover { background: #c73352; }
+    button#start-btn:disabled { background: #444; cursor: not-allowed; }
+
+    #status { text-align: center; margin-top: 1rem; font-size: 0.8rem; color: #6060a0; min-height: 1.2rem; }
+    #status.ok  { color: #81c784; }
+    #status.err { color: #e94560; }
+
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚔ SMASH TOURNAMENT</h1>
+</header>
+<main>
+  <h2>LOBBY — SELECT YOUR FIGHTERS</h2>
+  <div class="grid" id="player-grid">
+    {% for i in range(1, 5) %}
+    {% set colors = ['p1','p2','p3','p4'] %}
+    <div class="card">
+      <div class="card-header">
+        <div class="port-badge {{ colors[i-1] }}">P{{ i }}</div>
+        <span>PLAYER {{ i }}</span>
+      </div>
+      <div>
+        <label>NAME</label>
+        <input type="text" id="name-{{ i }}" placeholder="Player {{ i }}" maxlength="16"/>
+      </div>
+      <div>
+        <label>CHARACTER</label>
+        <select id="char-{{ i }}" onchange="updateInfo({{ i }})">
+          {% for key, label in characters.items() %}
+          <option value="{{ key }}" {% if loop.index == i %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <div class="char-info" id="info-{{ i }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="start-row" style="flex-direction:column; align-items:center; gap:0.75rem;">
+    <div id="obs-check" style="font-size:0.75rem; color:#6060a0;">
+      Checking OBS stream...
+    </div>
+    <button id="start-btn" onclick="startGame()">START MATCH</button>
+    <button id="reset-btn" onclick="resetGame()"
+      style="display:none; padding:0.4rem 1.5rem; background:#2a2a4a; color:#9090c0;
+             border:none; border-radius:4px; font-family:inherit; font-size:0.75rem;
+             cursor:pointer; letter-spacing:1px;">
+      FORCE RESET (clear stuck game)
+    </button>
+  </div>
+  <div id="status"></div>
+</main>
+
+<script>
+const charDescriptions = {
+  FOX:    "Pure aggression — chases and up-smashes relentlessly.",
+  MARTH:  "Spacing game — forward-smashes from tipper range.",
+  FALCON: "Full-speed rush — grabs and aerials at close range.",
+  FALCO:  "Laser pressure — short-hop lasers then rushes in.",
+};
+
+function updateInfo(port) {
+  const val = document.getElementById(`char-${port}`).value;
+  document.getElementById(`info-${port}`).textContent = charDescriptions[val] || "";
+}
+
+// Init descriptions
+for (let i = 1; i <= 4; i++) updateInfo(i);
+
+// Check OBS stream health via OME WebSocket
+async function checkStream() {
+  const el = document.getElementById('obs-check');
+  try {
+    const ws = new WebSocket('ws://localhost:3333/app/stream');
+    ws.onopen = () => {
+      el.textContent = '✓ OBS stream detected — ready to go';
+      el.style.color = '#81c784';
+      ws.close();
+    };
+    ws.onerror = () => {
+      el.textContent = '⚠ No OBS stream detected — start streaming in OBS first';
+      el.style.color = '#e94560';
+    };
+    setTimeout(() => { if (ws.readyState === 0) ws.close(); }, 3000);
+  } catch(e) {
+    el.textContent = '⚠ Could not check OBS stream status';
+    el.style.color = '#888';
+  }
+}
+checkStream();
+
+// Show reset button if a game is already running
+async function checkPhase() {
+  const s = await fetch('/api/state').then(r => r.json());
+  if (s.phase !== 'idle') {
+    document.getElementById('reset-btn').style.display = 'block';
+    document.getElementById('status').textContent = `Game is in phase: ${s.phase}`;
+    document.getElementById('status').className = 'err';
+  }
+}
+checkPhase();
+
+async function resetGame() {
+  await fetch('/api/stop', { method: 'POST' });
+  document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('status').textContent = 'Game reset — ready to start';
+  document.getElementById('status').className = 'ok';
+  document.getElementById('start-btn').disabled = false;
+}
+
+async function startGame() {
+  const btn = document.getElementById('start-btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+
+  const players = [1,2,3,4].map(i => ({
+    port: i,
+    name: document.getElementById(`name-${i}`).value.trim() || `Player ${i}`,
+    character: document.getElementById(`char-${i}`).value,
+  }));
+
+  status.textContent = "Starting match...";
+  status.className = "";
+
+  try {
+    const res = await fetch('/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ players }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Error");
+
+    status.textContent = "Dolphin is launching — watch page will open shortly...";
+    status.className = "ok";
+
+    // Poll until game is actually in_game, then redirect
+    const poll = setInterval(async () => {
+      const s = await fetch('/api/state').then(r => r.json());
+      if (s.phase === 'in_game' || s.phase === 'postgame') {
+        clearInterval(poll);
+        window.location.href = '/watch';
+      }
+    }, 1000);
+
+  } catch (e) {
+    status.textContent = e.message;
+    status.className = "err";
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

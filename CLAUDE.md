@@ -67,17 +67,15 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
 # 1. Start OvenMediaEngine
 docker start ome
 
-# 2. Start the game loop (launches Dolphin automatically)
+# 2. Start the unified server (FastAPI + orchestrator; launches Dolphin automatically)
 source .venv/bin/activate
-python3 -m core.melee_orchestrator &
+python main.py
 
 # 3. Open OBS and click Start Streaming
 #    (OBS is already configured — just hit the button)
 
-# 4. Open the dashboard or test page in a browser
-open /tmp/webrtc-test.html   # quick test
-# or:
-uvicorn frontend.app:app --host 0.0.0.0 --port 8080
+# 4. Open the lobby, pick 4 characters, start a match
+open http://localhost:8080/lobby
 ```
 
 ---
@@ -90,23 +88,55 @@ Always activate the venv first:
 source .venv/bin/activate
 ```
 
-Run the orchestrator (launches Dolphin, navigates menus, starts match):
+Run the unified launcher (starts FastAPI on :8080 and launches Dolphin once,
+keeping it alive across matches so OBS captures a stable window):
 
 ```bash
-python3 -m core.melee_orchestrator
+python main.py
 ```
 
-Dolphin will open a window. Within ~15 seconds it will:
-1. Boot the ISO
-2. Navigate to Character Select (CSS)
-3. Lock in Fox (P1) vs Marth CPU level 3 (P2)
-4. Navigate Stage Select → Final Destination
-5. Start the match
+Dolphin boots the ISO and idles at the menus. Matches are queued via the
+lobby UI or the API — always exactly 4 players:
+
+```bash
+curl -X POST http://localhost:8080/api/start -H 'Content-Type: application/json' -d '{
+  "players": [
+    {"port": 1, "name": "A", "character": "FOX"},
+    {"port": 2, "name": "B", "character": "MARTH"},
+    {"port": 3, "name": "C", "character": "FALCON"},
+    {"port": 4, "name": "D", "character": "FALCO"}
+  ]}'
+```
+
+The game loop picks the match up at CSS, locks in all four characters,
+selects Final Destination, and starts. CSS → in-game takes a couple of
+seconds; if cursors visibly overshoot or oscillate, see "Game loop rules"
+below. Poll `GET /api/state` for phase/scores.
 
 To stop: `Ctrl+C` (or `kill <pid>`). Dolphin closes with the Python process.
 
 MoltenVK (`[mvk-*]`) log spam is normal — it is Vulkan noise from the
 Intel-on-ARM Rosetta path. Not errors. Filter with `grep -v mvk` if needed.
+
+### Game loop rules (hard-won — do not regress these)
+
+The full write-up lives in the `libmelee-game-loop` skill. Summary:
+
+1. **`console.step()` is the 60fps pacer** (`polling_mode=False` blocks until
+   Dolphin's next frame). **Never add a pacing sleep around it.** An extra
+   `sleep(1/60 - elapsed)` means that after any hiccup the socket backlog of
+   frame events can never drain — every gamestate is permanently N frames
+   stale, and `choose_character`'s bang-bang navigation then overshoots and
+   oscillates. This exact bug caused erratic CSS cursors here; capping stick
+   deflection to hide it was wrong. Use vanilla libmelee helpers.
+2. **Call `step()` via `await asyncio.to_thread(...)`** — it is a blocking
+   socket read and must not sit on the event loop thread next to uvicorn.
+3. **On every menu transition, `release_all()` all controllers once** —
+   entering CSS with A still held (from main-menu mashing) grabs the CPU
+   slider.
+4. **If a port reports `is_holding_cpu_slider`, `release_all()` instead of
+   calling `choose_character`** — an upstream operator-precedence bug makes
+   the helper chase the slider rows even with `cpu_level=0`.
 
 ---
 
@@ -176,8 +206,10 @@ menu_helper.choose_stage(
     autostart=True,
 )
 
-# All-in-one helper (handles MAIN_MENU, STAGE_SELECT, POSTGAME_SCORES, PRESS_START)
-# Does NOT drive CSS — handle that manually with choose_character above
+# All-in-one helper (handles MAIN_MENU, CHARACTER_SELECT, STAGE_SELECT,
+# POSTGAME_SCORES, PRESS_START). It DOES drive CSS via choose_character
+# internally — but only for the single controller passed in, so you still
+# need one call per connected port per frame.
 menu_helper.menu_helper_simple(
     gamestate=gamestate,
     controller=ctrl_p1,
@@ -206,11 +238,13 @@ p1.action         # melee.Action enum — current animation state
 p1.character      # melee.Character enum
 ```
 
-### Known pitfall: CSS requires both controllers
+### Known pitfall: CSS requires ALL connected controllers
 
-If only P1's controller is driven through CSS, P2's cursor floats idle and
-the game never starts. Always call `choose_character` for both ports every frame
-during `menu_state == melee.Menu.CHARACTER_SELECT`.
+If any connected port is not driven through CSS, its cursor floats idle and
+the game never starts. The orchestrator connects all 4 controllers at launch,
+which is why `/api/start` requires exactly 4 players. Call `choose_character`
+for every connected port every frame during
+`menu_state == melee.Menu.CHARACTER_SELECT`.
 
 ---
 
@@ -241,9 +275,11 @@ class Bot:
 
 See `core/bot_template.py` for a working example with a simple chase-and-attack logic.
 
-Bots are uploaded via the dashboard (`/api/bot/upload`) and hot-reloaded by
-`core/bot_loader.py` using `importlib` whenever the file's mtime changes —
-no restart required.
+Bots currently live at fixed paths in `core/bots/` (one per character) and
+are hot-reloaded by `core/bot_loader.py` using `importlib` whenever the
+file's mtime changes — no restart required. The `/api/bot/upload` route from
+the target architecture is not implemented yet; edit the files in
+`core/bots/` directly.
 
 ---
 
@@ -389,23 +425,20 @@ Ports tunnelled:
 
 ## Web Dashboard
 
-```bash
-source .venv/bin/activate
-uvicorn frontend.app:app --host 0.0.0.0 --port 8080
-```
+Served by `python main.py` (do not run uvicorn separately — the orchestrator
+would be missing). `main.py` injects the `MeleeOrchestrator` instance into
+`frontend.app._orchestrator` and runs uvicorn in the same event loop.
 
-Routes:
-- `GET /` — dashboard with OvenPlayer embed
-- `POST /api/bot/upload` — upload a `.py` bot file
-- `POST /api/bot/deactivate` — fall back to LLM
-- `POST /api/prompt` — send a text prompt to the LLM
-- `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action, position)
+Routes (`frontend/app.py`):
+- `GET /lobby` — pick 4 players/characters and start a match (`/` redirects here)
+- `GET /watch` — OvenPlayer stream embed + live scores
+- `POST /api/start` — queue a match; body: `{"players": [{port, name, character} × 4]}`
+- `POST /api/stop` — reset app state
+- `GET /api/state` — phase, scores, winner
+- `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action)
 
-The orchestrator and web server are currently separate processes.
-`frontend/app.py` has a `_orchestrator` global that must be injected at startup
-to enable the WebSocket feed and bot API. This wiring is not yet done —
-when connecting them, import `MeleeOrchestrator` in `frontend/app.py` and
-assign the instance to `frontend.app._orchestrator` before `uvicorn` starts.
+Characters map to fixed bot files in `core/bots/` (fox.py, marth.py,
+falcon.py, falco.py), hot-reloaded by `core/bot_loader.py` on mtime change.
 
 ---
 
@@ -413,6 +446,5 @@ assign the instance to `frontend.app._orchestrator` before `uvicorn` starts.
 
 - [ ] frp tunnel not configured (needs Hetzner IP + auth token)
 - [ ] nginx configs not deployed to Hetzner VM
-- [ ] Orchestrator and FastAPI server not yet wired together into a single launcher
 - [ ] Ollama / Llama3 not installed (LLM decisions will always fall back to None)
 - [ ] No test suite

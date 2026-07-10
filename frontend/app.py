@@ -1,124 +1,144 @@
-"""
-FastAPI web server — dashboard, bot upload, and WebSocket game state feed.
-"""
-
+"""FastAPI server — lobby, watch, bot upload, and WebSocket game state."""
 import asyncio
 import json
 import logging
 from pathlib import Path
 
-import aiofiles
 import toml
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.requests import Request
+
+from core.game_state import Phase, PlayerConfig, app_state
 
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
-UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
+BOTS_DIR    = Path(__file__).parent.parent / "core" / "bots"
+UPLOAD_DIR  = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 config = toml.load(CONFIG_PATH)
+
 app = FastAPI(title="Smash Tournament")
-
-def _webrtc_url() -> str:
-    """Derive WebRTC signaling URL from config mode."""
-    mode = config["streaming"].get("mode", "local")
-    if mode == "production":
-        stream_domain = config["domains"]["stream"]
-        return f"wss://{stream_domain}/app/stream"
-    return config["streaming"]["webrtc_signal"]
-
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
-# WebSocket clients watching the game state feed
-_ws_clients: list[WebSocket] = []
-
-# Shared reference to the orchestrator (injected at startup)
+# Injected by main.py
 _orchestrator = None
 
+SUPPORTED_CHARACTERS = {
+    "FOX":    "Fox",
+    "MARTH":  "Marth",
+    "FALCON": "Captain Falcon",
+    "FALCO":  "Falco",
+}
 
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    webrtc_url = _webrtc_url()
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "webrtc_url": webrtc_url},
-    )
+BOT_FILES = {
+    "FOX":    BOTS_DIR / "fox.py",
+    "MARTH":  BOTS_DIR / "marth.py",
+    "FALCON": BOTS_DIR / "falcon.py",
+    "FALCO":  BOTS_DIR / "falco.py",
+}
 
-
-@app.post("/api/bot/upload")
-async def upload_bot(file: UploadFile = File(...)):
-    if not file.filename.endswith(".py"):
-        raise HTTPException(status_code=400, detail="Only .py files are accepted")
-    dest = UPLOAD_DIR / file.filename
-    async with aiofiles.open(dest, "wb") as f:
-        content = await file.read()
-        await f.write(content)
-    if _orchestrator is not None:
-        success = _orchestrator.bot_loader.load(dest)
-        if not success:
-            raise HTTPException(status_code=422, detail="Bot script failed validation — check logs")
-    return {"status": "loaded", "filename": file.filename}
+def _webrtc_url() -> str:
+    mode = config["streaming"].get("mode", "local")
+    if mode == "production":
+        return f"wss://{config['domains']['stream']}/app/stream"
+    return config["streaming"]["webrtc_signal"]
 
 
-@app.post("/api/bot/deactivate")
-async def deactivate_bot():
-    if _orchestrator is not None:
-        _orchestrator.bot_loader.deactivate()
-    return {"status": "deactivated"}
+# ------------------------------------------------------------------ #
+#  Pages                                                               #
+# ------------------------------------------------------------------ #
+
+@app.get("/", response_class=RedirectResponse)
+async def root():
+    return RedirectResponse("/lobby")
 
 
-@app.post("/api/prompt")
-async def submit_prompt(body: dict):
-    """Accept a text prompt; the LLM client will use it on next decision cycle."""
-    prompt = body.get("prompt", "").strip()
-    if not prompt:
-        raise HTTPException(status_code=400, detail="prompt is required")
-    # Store prompt in the LLM client for next frame — simple override
-    if _orchestrator is not None:
-        _orchestrator.llm._override_prompt = prompt
-    return {"status": "queued"}
+@app.get("/lobby", response_class=HTMLResponse)
+async def lobby(request: Request):
+    return templates.TemplateResponse(request, "lobby.html", {
+        "characters": SUPPORTED_CHARACTERS,
+        "phase": app_state.phase.value,
+    })
 
+
+@app.get("/watch", response_class=HTMLResponse)
+async def watch(request: Request):
+    if app_state.phase == Phase.IDLE:
+        return RedirectResponse("/lobby")
+    return templates.TemplateResponse(request, "watch.html", {
+        "webrtc_url": _webrtc_url(),
+        "players": [
+            {"port": p.port, "name": p.name, "character": SUPPORTED_CHARACTERS.get(p.character, p.character)}
+            for p in app_state.players
+        ],
+    })
+
+
+# ------------------------------------------------------------------ #
+#  API                                                                 #
+# ------------------------------------------------------------------ #
+
+class StartRequest(BaseModel):
+    players: list[dict]   # [{port, name, character}]
+
+
+@app.post("/api/start")
+async def start_game(body: StartRequest):
+    if app_state.phase not in (Phase.IDLE, Phase.POSTGAME):
+        raise HTTPException(status_code=409, detail="A game is already running")
+    if len(body.players) != 4:
+        raise HTTPException(status_code=400, detail="Exactly 4 players required")
+
+    configs = []
+    for p in body.players:
+        char = p.get("character", "").upper()
+        if char not in BOT_FILES:
+            raise HTTPException(status_code=400, detail=f"Unknown character: {char}")
+        configs.append(PlayerConfig(
+            port=int(p["port"]),
+            name=p.get("name", f"Player {p['port']}"),
+            character=char,
+            bot_path=BOT_FILES[char],
+        ))
+
+    if _orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+
+    _orchestrator.queue_match(configs)
+    return {"status": "starting"}
+
+
+@app.post("/api/stop")
+async def stop_game():
+    app_state.reset()
+    return {"status": "stopped"}
+
+
+@app.get("/api/state")
+async def get_state():
+    return app_state.to_dict()
+
+
+# ------------------------------------------------------------------ #
+#  WebSocket — live game state push                                    #
+# ------------------------------------------------------------------ #
 
 @app.websocket("/ws/gamestate")
 async def gamestate_ws(websocket: WebSocket):
-    """Push live game state snapshots to connected browsers."""
     await websocket.accept()
-    _ws_clients.append(websocket)
     try:
         while True:
-            await asyncio.sleep(0.1)  # 10Hz state push is plenty for the UI
-            if _orchestrator and _orchestrator._latest_gamestate:
-                gs = _orchestrator._latest_gamestate
-                p1 = gs.players.get(1)
-                p2 = gs.players.get(2)
-                payload = {
-                    "frame": gs.frame,
-                    "p1": {
-                        "x": round(p1.position.x, 1) if p1 else None,
-                        "y": round(p1.position.y, 1) if p1 else None,
-                        "stock": p1.stock if p1 else None,
-                        "percent": round(p1.percent, 0) if p1 else None,
-                        "action": p1.action.name if p1 else None,
-                    },
-                    "p2": {
-                        "x": round(p2.position.x, 1) if p2 else None,
-                        "y": round(p2.position.y, 1) if p2 else None,
-                        "stock": p2.stock if p2 else None,
-                        "percent": round(p2.percent, 0) if p2 else None,
-                        "action": p2.action.name if p2 else None,
-                    },
-                }
-                try:
-                    await websocket.send_text(json.dumps(payload))
-                except WebSocketDisconnect:
-                    break
+            await asyncio.sleep(0.1)
+            try:
+                await websocket.send_text(json.dumps(app_state.to_dict()))
+            except WebSocketDisconnect:
+                break
     except WebSocketDisconnect:
         pass
-    finally:
-        _ws_clients.remove(websocket)

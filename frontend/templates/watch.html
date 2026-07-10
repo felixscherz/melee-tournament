@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smash Tournament — Live</title>
+  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; }
+
+    header {
+      background: #1a1a2e; padding: 0.8rem 2rem;
+      border-bottom: 2px solid #e94560;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.2rem; color: #e94560; letter-spacing: 3px; }
+    .live-badge {
+      background: #e94560; color: #fff; font-size: 0.65rem;
+      padding: 2px 8px; border-radius: 3px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    #player_id { width: 100%; aspect-ratio: 16/9; background: #000; }
+
+    .scoreboard {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: #111;
+    }
+
+    .score-card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 6px;
+      padding: 0.75rem;
+      text-align: center;
+      position: relative;
+    }
+    .score-card.eliminated { opacity: 0.35; }
+    .score-card.winner { border-color: gold; box-shadow: 0 0 12px gold; }
+
+    .player-name { font-size: 0.75rem; color: #9090b0; letter-spacing: 1px; margin-bottom: 0.2rem; }
+    .char-name   { font-size: 0.65rem; color: #5050a0; margin-bottom: 0.5rem; }
+
+    .stocks { display: flex; justify-content: center; gap: 4px; margin-bottom: 0.4rem; }
+    .stock-icon {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: currentColor; display: inline-block;
+    }
+    .stock-icon.dead { background: #333; }
+
+    .percent { font-size: 1.6rem; font-weight: bold; }
+    .p1 .percent { color: #4fc3f7; }
+    .p2 .percent { color: #ef9a9a; }
+    .p3 .percent { color: #a5d6a7; }
+    .p4 .percent { color: #ffe082; }
+    .p1 .stock-icon:not(.dead) { color: #4fc3f7; }
+    .p2 .stock-icon:not(.dead) { color: #ef9a9a; }
+    .p3 .stock-icon:not(.dead) { color: #a5d6a7; }
+    .p4 .stock-icon:not(.dead) { color: #ffe082; }
+
+    .action-label { font-size: 0.6rem; color: #3a3a6a; margin-top: 0.25rem; height: 0.75rem; overflow: hidden; }
+
+    #game-status {
+      text-align: center; padding: 0.5rem;
+      font-size: 0.75rem; color: #6060a0; letter-spacing: 1px;
+    }
+    #game-status.winner-banner { color: gold; font-size: 1rem; letter-spacing: 3px; }
+
+    .back-btn {
+      display: none; margin: 0.5rem auto; padding: 0.5rem 1.5rem;
+      background: #2a2a4a; color: #e0e0e0; border: none;
+      border-radius: 4px; font-family: inherit; font-size: 0.8rem;
+      cursor: pointer; letter-spacing: 1px;
+    }
+    .back-btn:hover { background: #3a3a6a; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚔ SMASH TOURNAMENT</h1>
+  <span class="live-badge" id="live-badge">LIVE</span>
+</header>
+
+<div id="player_id"></div>
+
+<div class="scoreboard" id="scoreboard">
+  {% for p in players %}
+  <div class="score-card p{{ p.port }}" id="card-{{ p.port }}">
+    <div class="player-name">{{ p.name }}</div>
+    <div class="char-name">{{ p.character }}</div>
+    <div class="stocks" id="stocks-{{ p.port }}">
+      {% for _ in range(4) %}<span class="stock-icon"></span>{% endfor %}
+    </div>
+    <div class="percent" id="pct-{{ p.port }}">0%</div>
+    <div class="action-label" id="action-{{ p.port }}"></div>
+  </div>
+  {% endfor %}
+</div>
+
+<div id="game-status">CONNECTING...</div>
+<button class="back-btn" id="back-btn" onclick="location.href='/lobby'">← NEW MATCH</button>
+
+<script>
+const player = OvenPlayer.create('player_id', {
+  sources: [{ label: 'WebRTC', type: 'webrtc', file: '{{ webrtc_url }}' }],
+  autoStart: true,
+  mute: false,
+  webrtcConfig: { timeoutMaxRetry: 4, connectionTimeout: 10000, playoutDelayHint: 0 },
+});
+
+const portColors = { 1: '#4fc3f7', 2: '#ef9a9a', 3: '#a5d6a7', 4: '#ffe082' };
+
+function renderScores(data) {
+  const scores = data.scores || {};
+  const phase  = data.phase;
+
+  for (const [portStr, s] of Object.entries(scores)) {
+    const port = parseInt(portStr);
+    const pctEl    = document.getElementById(`pct-${port}`);
+    const stocksEl = document.getElementById(`stocks-${port}`);
+    const actionEl = document.getElementById(`action-${port}`);
+    const card     = document.getElementById(`card-${port}`);
+    if (!pctEl) continue;
+
+    pctEl.textContent = s.percent + '%';
+    actionEl.textContent = s.action || '';
+
+    // Render stock icons
+    stocksEl.innerHTML = '';
+    for (let i = 0; i < 4; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'stock-icon' + (i >= s.stock ? ' dead' : '');
+      stocksEl.appendChild(dot);
+    }
+
+    card.classList.toggle('eliminated', s.stock === 0);
+  }
+
+  const statusEl = document.getElementById('game-status');
+  const backBtn  = document.getElementById('back-btn');
+  const badge    = document.getElementById('live-badge');
+
+  if (phase === 'postgame' && data.winner) {
+    statusEl.textContent = `🏆 ${data.winner} WINS!`;
+    statusEl.className = 'winner-banner';
+    badge.textContent = 'ENDED';
+    badge.style.background = '#444';
+    backBtn.style.display = 'block';
+
+    // Highlight winner card
+    for (const [portStr, s] of Object.entries(scores)) {
+      const card = document.getElementById(`card-${parseInt(portStr)}`);
+      if (card && s.stock > 0) card.classList.add('winner');
+    }
+  } else if (phase === 'in_game') {
+    statusEl.textContent = 'LIVE';
+    statusEl.className = '';
+  } else if (phase === 'starting') {
+    statusEl.textContent = 'STARTING...';
+  }
+}
+
+// WebSocket game state feed
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws/gamestate`);
+  ws.onmessage = e => renderScores(JSON.parse(e.data));
+  ws.onclose   = () => setTimeout(connect, 2000);
+}
+connect();
+</script>
+</body>
+</html>
