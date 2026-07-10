@@ -68,6 +68,11 @@ async def lobby(request: Request):
     })
 
 
+@app.get("/admin", response_class=HTMLResponse)
+async def admin(request: Request):
+    return templates.TemplateResponse(request, "admin.html", {})
+
+
 @app.get("/watch", response_class=HTMLResponse)
 async def watch(request: Request):
     if app_state.phase == Phase.IDLE:
@@ -117,8 +122,23 @@ async def start_game(body: StartRequest):
 
 @app.post("/api/stop")
 async def stop_game():
-    app_state.reset()
+    # Actually abort the running match (soft-reset Dolphin to the menus) and
+    # return to IDLE. abort_match() also resets app_state; fall back to a bare
+    # state reset if the orchestrator isn't wired up (e.g. tests).
+    if _orchestrator is not None:
+        _orchestrator.abort_match()
+    else:
+        app_state.reset()
     return {"status": "stopped"}
+
+
+@app.post("/api/restart")
+async def restart_game():
+    if _orchestrator is None:
+        raise HTTPException(status_code=503, detail="Orchestrator not ready")
+    if not _orchestrator.restart_match():
+        raise HTTPException(status_code=409, detail="No match to restart yet")
+    return {"status": "restarting"}
 
 
 @app.get("/api/state")

@@ -329,3 +329,41 @@ for port in connected_ports:  # only ports present in gamestate.players
         start=(port == start_port),   # True on exactly one port
     )
 ```
+
+---
+
+## Force-quitting a match mid-game — DOES NOT WORK via controller
+
+**There is no controller-input way to abort an in-progress match back to the
+CSS in this setup.** Verified empirically (2026-07, vanilla NTSC 1.02 GALE01r2
+under Slippi Dolphin, offline VS driven by libmelee).
+
+The **LRAS combo (L + R + A + Start)** — the Slippi *netplay* quit — was tried
+and does **not** quit offline. Through the controller pipe, Start is always
+interpreted as **pause**, and the match just freezes. None of these variants
+changed that outcome:
+- digital L/R only; digital + analog shoulders (`press_shoulder(L/R, 1.0)`,
+  which does reach full scale — `fix_analog_trigger(1.0)` → raw 140);
+- pressing all four on one frame **and** staging (hold L+R+A first, add Start
+  N frames later);
+- sending a fully clean combo (`release_all()` first, settle frames, other
+  ports held still) so no leftover bot input contaminated it.
+
+All still pause. Conclusion: **LRAS is a Slippi netplay feature; it is not
+available in an offline libmelee VS match.**
+
+Also checked and unavailable for this:
+- **libmelee has no reset/quit API.** `Console` exposes only `run()` /
+  `stop()` (`stop()` kills the whole Dolphin process) — no mid-match reset.
+- **No usable Gecko code.** The bundled `GALE01r2.ini` optional codes are only
+  *Infinite Time*, *Instant Match* (auto-restart **after** a game ends — not a
+  mid-match quit), *Allow Bot Input Overrides*, and *FFW VS Mode*.
+
+If a mid-match "stop → back to CSS" is ever needed, the only real options are:
+1. `console.stop()` + relaunch Dolphin (loses the stable OBS window; ~5–10s).
+2. Inject a custom "L+R+A+Start → reset to CSS" Gecko code (exists in
+   20XX/UnclePunch code sets) into `GALE01r2.ini`. Untested here.
+
+The abort scaffolding built for this (orchestrator `abort_match()` /
+`restart_match()`, `/admin` page, staged-combo `_hold_reset_combo`) is left in
+the repo but the combo does not actually reset the game.
