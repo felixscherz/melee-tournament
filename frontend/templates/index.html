@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smash Tournament — Live</title>
+  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; }
+
+    header {
+      background: #1a1a2e;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 2px solid #e94560;
+    }
+    header h1 { font-size: 1.4rem; color: #e94560; letter-spacing: 2px; }
+    .live-badge {
+      background: #e94560;
+      color: #fff;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 3px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 1.5rem;
+      padding: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    #player_id { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 6px; overflow: hidden; }
+
+    .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 6px;
+      padding: 1rem;
+    }
+    .card h2 { font-size: 0.85rem; color: #9090b0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .stat { background: #11112a; padding: 0.5rem 0.75rem; border-radius: 4px; }
+    .stat .label { font-size: 0.65rem; color: #6060a0; }
+    .stat .value { font-size: 1.1rem; font-weight: bold; color: #e0e0ff; }
+    .stat.p1 .value { color: #4fc3f7; }
+    .stat.p2 .value { color: #ef9a9a; }
+
+    textarea, input[type=text] {
+      width: 100%;
+      background: #11112a;
+      border: 1px solid #2a2a4a;
+      color: #e0e0e0;
+      border-radius: 4px;
+      padding: 0.5rem;
+      font-family: inherit;
+      font-size: 0.85rem;
+      resize: vertical;
+    }
+    textarea { min-height: 80px; }
+
+    button {
+      width: 100%;
+      padding: 0.5rem;
+      margin-top: 0.5rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+    .btn-primary { background: #e94560; color: #fff; }
+    .btn-primary:hover { background: #c73352; }
+    .btn-secondary { background: #2a2a4a; color: #9090c0; }
+    .btn-secondary:hover { background: #3a3a5a; }
+
+    .file-drop {
+      border: 2px dashed #2a2a4a;
+      border-radius: 4px;
+      padding: 1rem;
+      text-align: center;
+      color: #6060a0;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .file-drop:hover, .file-drop.over { border-color: #e94560; color: #e94560; }
+
+    #status-bar {
+      font-size: 0.75rem;
+      color: #6060a0;
+      padding: 0.4rem 0;
+      text-align: center;
+    }
+    #status-bar.ok { color: #81c784; }
+    #status-bar.err { color: #e94560; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚔ SMASH TOURNAMENT</h1>
+  <span class="live-badge">LIVE</span>
+</header>
+
+<div class="layout">
+  <!-- Left: video player -->
+  <div>
+    <div id="player_id"></div>
+  </div>
+
+  <!-- Right: sidebar -->
+  <div class="sidebar">
+
+    <!-- Game stats -->
+    <div class="card">
+      <h2>Game State</h2>
+      <div class="stat-grid">
+        <div class="stat p1">
+          <div class="label">P1 Stock</div>
+          <div class="value" id="p1-stock">—</div>
+        </div>
+        <div class="stat p2">
+          <div class="label">P2 Stock</div>
+          <div class="value" id="p2-stock">—</div>
+        </div>
+        <div class="stat p1">
+          <div class="label">P1 Damage</div>
+          <div class="value" id="p1-pct">—</div>
+        </div>
+        <div class="stat p2">
+          <div class="label">P2 Damage</div>
+          <div class="value" id="p2-pct">—</div>
+        </div>
+        <div class="stat p1" style="grid-column: span 2;">
+          <div class="label">P1 Action</div>
+          <div class="value" id="p1-action" style="font-size:0.85rem;">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LLM prompt -->
+    <div class="card">
+      <h2>LLM Prompt</h2>
+      <textarea id="prompt-input" placeholder="e.g. Play aggressively and spam down-smash near the ledge..."></textarea>
+      <button class="btn-primary" onclick="submitPrompt()">SEND PROMPT</button>
+    </div>
+
+    <!-- Bot upload -->
+    <div class="card">
+      <h2>Upload Bot Script</h2>
+      <div class="file-drop" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        Drop .py file here or click to browse
+      </div>
+      <input type="file" id="file-input" accept=".py" style="display:none" onchange="uploadBot(this.files[0])"/>
+      <button class="btn-secondary" onclick="deactivateBot()">DEACTIVATE BOT → USE LLM</button>
+    </div>
+
+    <div id="status-bar">Connecting...</div>
+  </div>
+</div>
+
+<script src="/static/dashboard.js"></script>
+<script>
+  // OvenPlayer WebRTC setup
+  const player = OvenPlayer.create('player_id', {
+    sources: [{
+      label: 'WebRTC',
+      type: 'webrtc',
+      file: '{{ webrtc_url }}'
+    }],
+    autoStart: true,
+    mute: false,
+  });
+
+  // Drag-and-drop
+  const dropZone = document.getElementById('drop-zone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('over');
+    const file = e.dataTransfer.files[0];
+    if (file) uploadBot(file);
+  });
+</script>
+</body>
+</html>

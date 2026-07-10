@@ -1,0 +1,67 @@
+# frp CLIENT config — runs on your MacBook
+# Install: brew install frpc
+# Run:     frpc -c config/frpc.toml
+
+serverAddr = "YOUR_HETZNER_IP"   # Replace with your Hetzner VM public IP
+serverPort = 7000
+auth.token = "CHANGE_ME_SECRET"  # Must match frps.toml
+
+# Web dashboard (FastAPI)
+[[proxies]]
+name       = "web"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 8080
+remotePort = 80
+
+# OvenMediaEngine WebRTC signaling (WSS)
+[[proxies]]
+name       = "webrtc-signal"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 3333
+remotePort = 3333
+
+# OvenMediaEngine WebRTC media UDP (port range)
+[[proxies]]
+name       = "webrtc-udp-10000"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 10000
+remotePort = 10000
+
+[[proxies]]
+name       = "webrtc-udp-10001"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 10001
+remotePort = 10001
+
+[[proxies]]
+name       = "webrtc-udp-10002"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 10002
+remotePort = 10002
+
+[[proxies]]
+name       = "webrtc-udp-10003"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 10003
+remotePort = 10003
+
+[[proxies]]
+name       = "webrtc-udp-10004"
+type       = "udp"
+localIP    = "127.0.0.1"
+localPort  = 10004
+remotePort = 10004
+
+# RTMP ingest (optional — only if you want remote OBS to push to your Mac)
+[[proxies]]
+name       = "rtmp"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 1935
+remotePort = 1935

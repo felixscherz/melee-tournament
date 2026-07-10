@@ -1,0 +1,23 @@
+[dolphin]
+path = "/Applications/Slippi Dolphin.app/Contents/MacOS/Slippi Dolphin"
+iso  = "/Users/felixscherz/workspaces/personal/smash-tournament/assets/melee.iso"
+port = 51441
+
+[ollama]
+model    = "llama3"
+base_url = "http://localhost:11434"
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[domains]
+frontend = "smash.felixscherz.me"
+stream   = "stream-smash.felixscherz.me"
+
+[streaming]
+# Local OBS → OvenMediaEngine RTMP ingest
+rtmp_ingest   = "rtmp://localhost:1935/app/stream"
+# Set to "local" to use ws://localhost:3333 (no TLS), or "production" to use the stream domain
+mode          = "local"
+webrtc_signal = "ws://localhost:3333/app/stream"
