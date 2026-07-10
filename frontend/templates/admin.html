@@ -80,8 +80,7 @@
   </div>
 
   <div class="card">
-    <button class="btn btn-stop" id="stop-btn" onclick="stopMatch()">STOP &amp; RETURN TO LOBBY</button>
-    <button class="btn btn-restart" id="restart-btn" onclick="restartMatch()">RESTART MATCH</button>
+    <button class="btn btn-stop" id="stop-btn" onclick="stopMatch()">END MATCH &amp; RETURN TO LOBBY</button>
     <div class="links">
       <a href="/lobby">LOBBY</a>
       <a href="/watch">WATCH</a>
@@ -95,7 +94,6 @@
 const statusEl  = document.getElementById('status');
 const pill      = document.getElementById('phase-pill');
 const stopBtn   = document.getElementById('stop-btn');
-const restartBtn = document.getElementById('restart-btn');
 
 function setStatus(msg, cls = '') {
   statusEl.textContent = msg;
@@ -120,29 +118,15 @@ setInterval(refreshPhase, 2000);
 
 async function stopMatch() {
   stopBtn.disabled = true;
-  setStatus('Stopping match — returning Dolphin to the menus...', '');
+  // Offline Melee has no quit, so ending a live match makes the bots clear the
+  // stage until the game ends on its own — that takes a few seconds.
+  setStatus('Ending match — bots are clearing the stage, back to the lobby shortly...', '');
   try {
     const res = await fetch('/api/stop', { method: 'POST' });
     if (!res.ok) throw new Error((await res.json()).detail || 'Error');
-    setStatus('Match stopped — lobby is ready.', 'ok');
+    setStatus('Match ending — lobby will be ready once the game wraps up.', 'ok');
   } catch (e) {
     setStatus(e.message, 'err');
-  }
-  refreshPhase();
-}
-
-async function restartMatch() {
-  restartBtn.disabled = true;
-  setStatus('Restarting the last match...', '');
-  try {
-    const res = await fetch('/api/restart', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Error');
-    setStatus('Restarting — same players and characters.', 'ok');
-  } catch (e) {
-    setStatus(e.message, 'err');
-  } finally {
-    restartBtn.disabled = false;
   }
   refreshPhase();
 }

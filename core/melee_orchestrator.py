@@ -20,26 +20,22 @@ import toml
 
 from core.bot_loader import BotLoader
 from core.game_state import AppState, Phase, PlayerConfig, PlayerScore
+from core.roster import CHARACTER_MAP
 
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
 STAGE = melee.Stage.FINAL_DESTINATION
 
-# LRAS (L+R+A+Start) quits a Melee match back to CSS. The combo must be sent
-# CLEAN — any leftover bot input (a tilted stick, a held button) contaminates
-# it and it registers as a pause instead. So on abort we first release
-# everything for a few settle frames, then hold L+R+A, then add Start a few
-# frames later (a simultaneous press also reads as a pause).
-LRAS_SETTLE_FRAMES = 3
-LRAS_START_DELAY   = 5
+# Offline Melee VS mode has no controller-driven quit: L+R+A+Start (LRAS) only
+# returns to CSS in Slippi *online* play, and libmelee exposes no reset. So to
+# end a running match we force it the only reliable way — drive every bot off
+# the stage until one player is left and Melee declares GAME on its own. The
+# normal postgame -> CSS navigation then idles at the menus. See
+# _drive_self_destruct / abort_match.
 
-CHARACTER_MAP: dict[str, melee.Character] = {
-    "FOX":    melee.Character.FOX,
-    "MARTH":  melee.Character.MARTH,
-    "FALCON": melee.Character.CPTFALCON,
-    "FALCO":  melee.Character.FALCO,
-}
+# Character shown while idling at CSS with no match queued (see _handle_frame).
+IDLE_CHARACTER = melee.Character.FOX
 PORTS = [1, 2, 3, 4]
 
 
@@ -58,9 +54,10 @@ class MeleeOrchestrator:
         self._latest_gs: Optional[melee.GameState]        = None
         self._loop_task: Optional[asyncio.Task]           = None
         self._prev_menu: Optional[melee.Menu]             = None
-        self._aborting        = False
-        self._abort_frames    = 0
-        self._last_match: Optional[list[PlayerConfig]]    = None
+        # When True, the game loop ignores bots and drives every controller off
+        # the stage to force the current match to end (see abort_match /
+        # _drive_self_destruct). Cleared once we reach the postgame screen.
+        self._force_end       = False
 
     # ------------------------------------------------------------------ #
     #  Public API                                                           #
@@ -108,7 +105,6 @@ class MeleeOrchestrator:
 
     def queue_match(self, players: list[PlayerConfig]):
         """Queue a new match. Picked up by the game loop at the next CSS frame."""
-        self._last_match = players
         self._bot_loaders = {}
         for p in players:
             loader = BotLoader(upload_dir=Path("uploads"))
@@ -128,32 +124,26 @@ class MeleeOrchestrator:
         self._menu_helpers = {p: melee.MenuHelper() for p in PORTS}
 
     def abort_match(self):
-        """Force-quit the current match and return Dolphin to the menus.
+        """End the current match and return to the lobby.
 
-        Sets the abort flag; the game loop then holds the L+R+A+START
-        soft-reset combo until Dolphin leaves IN_GAME, and idles at the
-        menus afterwards. Pending/active players and shared web state are
-        cleared to IDLE so the lobby is usable again. Dolphin stays alive
-        (OBS keeps capturing the same window).
+        Offline Melee can't be quit with a controller, so if a match is live we
+        set _force_end and let the game loop drive every bot off the stage until
+        Melee declares GAME on its own; the postgame -> CSS navigation then
+        idles at the menus. _active_players is kept so the loop knows which
+        ports to drive and can detect the natural end — shared web state is
+        reset to IDLE once we reach the postgame screen. If nothing is live,
+        reset now. Dolphin stays alive (OBS keeps capturing the same window).
         """
-        self._aborting        = True
-        self._abort_frames    = 0
+        in_game = (self._latest_gs is not None
+                   and self._latest_gs.menu_state == melee.Menu.IN_GAME)
         self._pending_players = None
-        self._active_players  = None
-        self._actions         = {p: None for p in PORTS}
+        if in_game:
+            self._force_end = True
+            return
+        self._force_end      = False
+        self._active_players = None
+        self._actions        = {p: None for p in PORTS}
         self.state.reset()
-
-    def restart_match(self) -> bool:
-        """Abort the current match and immediately re-queue the last one.
-
-        Returns False if no match has been queued yet this session.
-        """
-        if not self._last_match:
-            return False
-        last = self._last_match
-        self.abort_match()
-        self.queue_match(last)
-        return True
 
     def stop(self):
         if self._loop_task:
@@ -199,50 +189,25 @@ class MeleeOrchestrator:
             except Exception as exc:
                 log.error("Frame handler error: %s", exc, exc_info=True)
 
-    def _hold_reset_combo(self, frames_held: int):
-        """Drive a CLEAN, staged LRAS (L+R+A+Start) quit combo on P1 to CSS.
+    def _drive_self_destruct(self, gs: melee.GameState):
+        """Force the match to end by walking every fighter off the stage.
 
-        release_all() first every frame so leftover bot inputs (a tilted
-        stick, a held B) can't contaminate the combo and get it misread as a
-        pause. Then: settle for a few frames with nothing held, hold L+R+A,
-        and only add Start once L+R+A have been held a few frames. Both the
-        analog shoulders (driven fully in) and the digital L/R bits are
-        pressed, since libmelee treats them separately.
+        Offline Melee has no controller quit, so each frame we push every port
+        full-tilt toward the blast edge it is already closest to (nothing else
+        held) — they walk or fall off and lose stocks until one player is left
+        and Melee declares GAME. Continuous horizontal input also peels anyone
+        who happens to grab a ledge straight back off it.
         """
-        ctrl = self._controllers[PORTS[0]]
-        ctrl.release_all()
-        if frames_held < LRAS_SETTLE_FRAMES:
-            return
-        ctrl.press_shoulder(melee.Button.BUTTON_L, 1.0)
-        ctrl.press_shoulder(melee.Button.BUTTON_R, 1.0)
-        ctrl.press_button(melee.Button.BUTTON_L)
-        ctrl.press_button(melee.Button.BUTTON_R)
-        ctrl.press_button(melee.Button.BUTTON_A)
-        if frames_held >= LRAS_SETTLE_FRAMES + LRAS_START_DELAY:
-            ctrl.press_button(melee.Button.BUTTON_START)
+        for port, ctrl in self._controllers.items():
+            ctrl.release_all()
+            p = gs.players.get(port)
+            if p is None:
+                continue
+            toward = 1.0 if p.position.x >= 0 else 0.0
+            ctrl.tilt_analog(melee.Button.BUTTON_MAIN, toward, 0.5)
 
     async def _handle_frame(self, gs: melee.GameState):
         menu = gs.menu_state
-
-        # Abort requested: hold the soft-reset combo until we exit the match,
-        # then release and idle at the menus. Pending/active players are
-        # already cleared, so the menu handlers below won't auto-start
-        # anything until a new match is queued from the lobby.
-        if self._aborting:
-            if menu == melee.Menu.IN_GAME:
-                # Keep the other ports still so only P1's clean combo is live.
-                for port, ctrl in self._controllers.items():
-                    if port != PORTS[0]:
-                        ctrl.release_all()
-                self._hold_reset_combo(self._abort_frames)
-                self._abort_frames += 1
-                return
-            for ctrl in self._controllers.values():
-                ctrl.release_all()
-            self._aborting = False
-            self._abort_frames = 0
-            self._prev_menu = menu
-            return
 
         # On any menu transition, flush held inputs once. Entering CSS with A
         # still held (from mashing through the main menu) is how a cursor
@@ -256,6 +221,22 @@ class MeleeOrchestrator:
         if menu == melee.Menu.CHARACTER_SELECT:
             players = self._pending_players or self._active_players
             if players is None:
+                # No match queued: park P1's cursor on a default character so
+                # we sit ready at CSS (start=False, so nothing begins). The
+                # slider-grab guard still applies while idling.
+                p1_state = gs.players.get(PORTS[0])
+                if p1_state is not None and p1_state.is_holding_cpu_slider:
+                    self._controllers[PORTS[0]].release_all()
+                    return
+                self._menu_helpers[PORTS[0]].choose_character(
+                    character=IDLE_CHARACTER,
+                    gamestate=gs,
+                    controller=self._controllers[PORTS[0]],
+                    cpu_level=0,
+                    costume=0,
+                    swag=False,
+                    start=False,
+                )
                 return
             for i, p in enumerate(players):
                 p_state = gs.players.get(p.port)
@@ -278,17 +259,19 @@ class MeleeOrchestrator:
 
         elif menu in (melee.Menu.MAIN_MENU, melee.Menu.PRESS_START):
             players = self._pending_players or self._active_players
-            if players is None:
-                # No match queued — idle at the menu instead of auto-starting.
-                return
-            char = CHARACTER_MAP.get(players[0].character, melee.Character.FOX)
+            # Even with no match queued, walk through the login/main menu into
+            # CSS and wait there — no reason to sit on the login screen. With no
+            # players we use a default character and autostart=False so we stop
+            # at CSS; once a match is queued the CSS branch above takes over.
+            char = (CHARACTER_MAP.get(players[0].character, IDLE_CHARACTER)
+                    if players else IDLE_CHARACTER)
             self._menu_helpers[PORTS[0]].menu_helper_simple(
                 gamestate=gs,
                 controller=self._controllers[PORTS[0]],
                 character_selected=char,
                 stage_selected=STAGE,
                 cpu_level=0,
-                autostart=True,
+                autostart=bool(players),
             )
 
         elif menu == melee.Menu.STAGE_SELECT:
@@ -305,6 +288,14 @@ class MeleeOrchestrator:
             )
 
         elif menu == melee.Menu.IN_GAME:
+            # Force-ending (stop pressed): ignore bots and walk everyone off the
+            # stage until Melee ends the match itself. Scores still tick so the
+            # watch page reflects the wind-down; state resets at POSTGAME_SCORES.
+            if self._force_end:
+                self._update_scores(gs)
+                self._drive_self_destruct(gs)
+                return
+
             if self._pending_players is not None:
                 self._active_players  = self._pending_players
                 self._pending_players = None
@@ -327,7 +318,13 @@ class MeleeOrchestrator:
                     await self._apply(self._controllers[p.port], actions.get(p.port))
 
         elif menu == melee.Menu.POSTGAME_SCORES:
-            if self.state.phase == Phase.IN_GAME:
+            if self._force_end:
+                # Forced end reached the scores screen — clear back to IDLE so
+                # the lobby is usable again, then walk the menus to CSS and idle.
+                self._force_end = False
+                self._actions   = {p: None for p in PORTS}
+                self.state.reset()
+            elif self.state.phase == Phase.IN_GAME:
                 self.state.phase = Phase.POSTGAME
             self._menu_helpers[PORTS[0]].menu_helper_simple(
                 gamestate=gs,

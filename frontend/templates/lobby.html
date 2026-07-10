@@ -58,6 +58,43 @@
       font-style: italic;
     }
 
+    details.bot-code > summary {
+      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
+      list-style: none; user-select: none; padding: 0.2rem 0;
+    }
+    details.bot-code > summary::before { content: '▸ '; }
+    details.bot-code[open] > summary::before { content: '▾ '; }
+    textarea {
+      width: 100%; margin-top: 0.5rem; padding: 0.5rem 0.7rem; min-height: 140px;
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
+      color: #cfe8cf; font-family: 'Courier New', monospace; font-size: 0.75rem;
+      line-height: 1.4; resize: vertical; outline: none; tab-size: 4;
+      white-space: pre; overflow-wrap: normal; overflow-x: auto;
+    }
+    textarea:focus { border-color: #e94560; }
+    .code-status { font-size: 0.68rem; margin-top: 0.3rem; min-height: 0.9rem; }
+    .code-status.ok  { color: #81c784; }
+    .code-status.err { color: #e94560; }
+
+    .instructions {
+      margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #2a2a4a;
+    }
+    .instructions h3 { color: #6060a0; letter-spacing: 2px; font-size: 0.9rem; margin-bottom: 0.8rem; }
+    .instructions p { font-size: 0.8rem; color: #9090b0; line-height: 1.6; margin-bottom: 0.8rem; }
+    .instructions ul { margin: 0 0 0.8rem 1.2rem; font-size: 0.8rem; color: #9090b0; line-height: 1.6; }
+    .instructions code { color: #cfe8cf; background: #11112a; padding: 0.05rem 0.3rem; border-radius: 3px; }
+    .instructions pre {
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 6px;
+      padding: 1rem; overflow-x: auto; font-size: 0.74rem; line-height: 1.5;
+      color: #cfe8cf; margin-bottom: 1.2rem;
+    }
+    .instructions .example-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+    .instructions .example-tabs button {
+      background: #2a2a4a; color: #9090c0; border: none; border-radius: 4px;
+      padding: 0.35rem 1rem; font-family: inherit; font-size: 0.72rem; cursor: pointer;
+    }
+    .instructions .example-tabs button.active { background: #e94560; color: #fff; }
+
     .start-row { margin-top: 1.5rem; display: flex; justify-content: center; }
     button#start-btn {
       padding: 0.75rem 3rem;
@@ -102,6 +139,13 @@
         </select>
         <div class="char-info" id="info-{{ i }}"></div>
       </div>
+      <details class="bot-code">
+        <summary>CUSTOM BOT CODE (optional — default AI used if blank)</summary>
+        <textarea id="code-{{ i }}" spellcheck="false"
+          placeholder="Paste a Python Bot class here. See the guide at the bottom of the page."
+          oninput="clearCodeStatus({{ i }})"></textarea>
+        <div class="code-status" id="code-status-{{ i }}"></div>
+      </details>
     </div>
     {% endfor %}
   </div>
@@ -119,23 +163,185 @@
     </button>
   </div>
   <div id="status"></div>
+
+  <section class="instructions">
+    <h3>HOW TO WRITE A BOT</h3>
+    <p>
+      Leave the code box blank to use the built-in AI for that character. To take
+      control, paste a Python snippet defining a <code>Bot</code> class with an
+      <code>act</code> method. It's called once per frame (~60fps) and returns the
+      controller inputs for that frame — or <code>None</code> to release everything.
+    </p>
+    <p>Your <code>act(gamestate, player_port)</code> must return a dict shaped like:</p>
+    <pre>{
+  "stick_x": 0.5,   # 0.0 = left, 1.0 = right, 0.5 = neutral
+  "stick_y": 0.5,   # 0.0 = down, 1.0 = up,    0.5 = neutral
+  "buttons": {
+    "BUTTON_A": False, "BUTTON_B": False,
+    "BUTTON_X": False, "BUTTON_Y": False,
+    "BUTTON_L": False, "BUTTON_R": False,
+    "BUTTON_Z": False,
+  },
+}</pre>
+    <p>Useful gamestate fields: <code>gamestate.players[port].position.x / .y</code>,
+      <code>.stock</code>, <code>.percent</code>, <code>.action</code>, <code>.character</code>.</p>
+
+    <h3>SAFETY RULES (enforced on submit)</h3>
+    <ul>
+      <li>Only <code>import melee</code> (plus <code>math</code>, <code>random</code>) is allowed — any other import is rejected.</li>
+      <li><code>eval</code>, <code>exec</code>, <code>compile</code>, <code>open</code>, <code>__import__</code> and similar are banned.</li>
+      <li>Dunder tricks like <code>().__class__.__bases__</code> are rejected.</li>
+      <li>A top-level <code>Bot</code> class with an <code>act</code> method is required.</li>
+    </ul>
+
+    <h3>EXAMPLES</h3>
+    <div class="example-tabs">
+      <button data-ex="generic" class="active" onclick="showExample('generic')">Generic (chase)</button>
+      <button data-ex="fox" onclick="showExample('fox')">Fox (up-smash)</button>
+      <button data-ex="falco" onclick="showExample('falco')">Falco (lasers)</button>
+    </div>
+    <pre id="example-code"></pre>
+    <p><button onclick="copyExample()"
+       style="background:#2a2a4a;color:#9090c0;border:none;border-radius:4px;padding:0.35rem 1rem;font-family:inherit;font-size:0.72rem;cursor:pointer;">
+       Copy example</button></p>
+  </section>
 </main>
 
 <script>
 const charDescriptions = {
   FOX:    "Pure aggression — chases and up-smashes relentlessly.",
   MARTH:  "Spacing game — forward-smashes from tipper range.",
-  FALCON: "Full-speed rush — grabs and aerials at close range.",
+  CPTFALCON: "Full-speed rush — grabs and aerials at close range.",
   FALCO:  "Laser pressure — short-hop lasers then rushes in.",
 };
 
 function updateInfo(port) {
   const val = document.getElementById(`char-${port}`).value;
-  document.getElementById(`info-${port}`).textContent = charDescriptions[val] || "";
+  document.getElementById(`info-${port}`).textContent =
+    charDescriptions[val] || "Generic AI — chases the nearest opponent and attacks.";
 }
 
 // Init descriptions
 for (let i = 1; i <= 4; i++) updateInfo(i);
+
+function clearCodeStatus(port) {
+  const el = document.getElementById(`code-status-${port}`);
+  el.textContent = ""; el.className = "code-status";
+}
+
+// ---- Example bot snippets shown in the guide ----
+const EXAMPLES = {
+  generic: `import melee
+
+
+class Bot:
+    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
+        me = gamestate.players.get(player_port)
+        if me is None:
+            return None
+
+        # Find the nearest opponent by horizontal distance.
+        target, best = None, float("inf")
+        for port, p in gamestate.players.items():
+            if port == player_port:
+                continue
+            d = abs(p.position.x - me.position.x)
+            if d < best:
+                best, target = d, p
+        if target is None:
+            return None
+
+        dx = target.position.x - me.position.x
+        stick_x = 1.0 if dx > 2 else (0.0 if dx < -2 else 0.5)
+
+        return {
+            "stick_x": stick_x,
+            "stick_y": 0.5,
+            "buttons": {"BUTTON_A": abs(dx) < 12},
+        }`,
+  fox: `import melee
+
+
+class Bot:
+    """Fox — chase and up-smash."""
+    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
+        me = gamestate.players.get(player_port)
+        if me is None:
+            return None
+
+        target, best = None, float("inf")
+        for port, p in gamestate.players.items():
+            if port != player_port and abs(p.position.x - me.position.x) < best:
+                best, target = abs(p.position.x - me.position.x), p
+        if target is None:
+            return None
+
+        dx = target.position.x - me.position.x
+        dist = abs(dx)
+        stick_x = 1.0 if dx > 2 else (0.0 if dx < -2 else 0.5)
+        up_smash = dist < 10
+
+        return {
+            "stick_x": stick_x,
+            "stick_y": 1.0 if up_smash else 0.5,
+            "buttons": {"BUTTON_A": dist < 12},
+        }`,
+  falco: `import melee
+
+LASER_RANGE = (25, 55)
+
+
+class Bot:
+    """Falco — short-hop lasers, then rush in and shine."""
+    def __init__(self):
+        self._frame = 0
+
+    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
+        self._frame += 1
+        me = gamestate.players.get(player_port)
+        if me is None:
+            return None
+
+        target, best = None, float("inf")
+        for port, p in gamestate.players.items():
+            if port != player_port and abs(p.position.x - me.position.x) < best:
+                best, target = abs(p.position.x - me.position.x), p
+        if target is None:
+            return None
+
+        dx = target.position.x - me.position.x
+        dist = abs(dx)
+        airborne = me.position.y > 1.0
+        in_range = LASER_RANGE[0] <= dist <= LASER_RANGE[1]
+
+        jump = in_range and not airborne and self._frame % 30 == 0
+        laser = airborne and in_range
+        shine = dist < 12
+        approach = dist > LASER_RANGE[1]
+
+        return {
+            "stick_x": (1.0 if dx > 0 else 0.0) if (approach or shine) else 0.5,
+            "stick_y": 0.0 if shine else 0.5,
+            "buttons": {
+                "BUTTON_A": shine,
+                "BUTTON_B": laser or shine,
+                "BUTTON_X": jump,
+            },
+        }`,
+};
+
+function showExample(name) {
+  document.getElementById('example-code').textContent = EXAMPLES[name];
+  document.querySelectorAll('.example-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.ex === name);
+  });
+}
+showExample('generic');
+
+async function copyExample() {
+  try { await navigator.clipboard.writeText(document.getElementById('example-code').textContent); }
+  catch (e) { /* clipboard blocked; ignore */ }
+}
 
 // Check OBS stream health via OME WebSocket
 async function checkStream() {
@@ -170,6 +376,30 @@ async function checkPhase() {
 }
 checkPhase();
 
+// Repopulate the form with whatever was submitted for the last match, so
+// coming back to the lobby after a game doesn't wipe names/characters/bot code.
+async function restoreForm() {
+  try {
+    const { players } = await fetch('/api/last-form').then(r => r.json());
+    if (!players || !players.length) return;
+    for (const p of players) {
+      const name = document.getElementById(`name-${p.port}`);
+      const char = document.getElementById(`char-${p.port}`);
+      const code = document.getElementById(`code-${p.port}`);
+      if (name && p.name) name.value = p.name;
+      if (char && p.character) char.value = p.character;
+      if (code && p.code) {
+        code.value = p.code;
+        // Reveal the collapsed <details> so restored code is visible, not lost.
+        const details = code.closest('details');
+        if (details) details.open = true;
+      }
+      if (typeof updateInfo === 'function') updateInfo(p.port);
+    }
+  } catch (e) { /* no prior form; leave defaults */ }
+}
+restoreForm();
+
 async function resetGame() {
   await fetch('/api/stop', { method: 'POST' });
   document.getElementById('reset-btn').style.display = 'none';
@@ -187,6 +417,7 @@ async function startGame() {
     port: i,
     name: document.getElementById(`name-${i}`).value.trim() || `Player ${i}`,
     character: document.getElementById(`char-${i}`).value,
+    code: document.getElementById(`code-${i}`).value,
   }));
 
   status.textContent = "Starting match...";
