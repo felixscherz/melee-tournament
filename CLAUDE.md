@@ -54,10 +54,31 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
 | Rosetta 2 | System | Already installed |
 | Melee ISO | `assets/melee.iso` | NTSC v1.02 (GALE01 r2) |
 | Python venv | `.venv/` | Python 3.13, activate before running anything |
-| OvenMediaEngine | Docker container `ome` | Ports 1935/TCP, 3333/TCP, 10000-10009/UDP |
-| OBS Studio | `/Applications/OBS.app` | For RTMP capture of Dolphin window |
+| OvenMediaEngine | Docker container `ome` | Ports 1935/TCP, 3333/TCP, 3478/TCP, 10000-10009/UDP |
+| OBS Studio | `/Applications/OBS.app` | Configured for 60fps, 6000 Kbps, no B-frames |
 | frpc | `$(brew --prefix)/bin/frpc` | v0.69.1, frp client for Mac |
 | Docker | System | v29.5, daemon already running |
+
+---
+
+## How to Start Everything (working local stack)
+
+```bash
+# 1. Start OvenMediaEngine
+docker start ome
+
+# 2. Start the game loop (launches Dolphin automatically)
+source .venv/bin/activate
+python3 -m core.melee_orchestrator &
+
+# 3. Open OBS and click Start Streaming
+#    (OBS is already configured — just hit the button)
+
+# 4. Open the dashboard or test page in a browser
+open /tmp/webrtc-test.html   # quick test
+# or:
+uvicorn frontend.app:app --host 0.0.0.0 --port 8080
+```
 
 ---
 
@@ -260,12 +281,86 @@ docker stop ome
 docker logs ome   # check status
 ```
 
-OBS → OME RTMP ingest: `rtmp://localhost:1935/app/stream`
-OvenPlayer WebRTC (local): `ws://localhost:3333/app/stream`
-OvenPlayer WebRTC (prod, via tunnel): `wss://stream-smash.felixscherz.me/app/stream`
+If you ever need to recreate the container (e.g. after `docker rm ome`), use
+**exactly** this command — all flags are required for correct local operation:
 
-The SSL cert error in `docker logs ome` is harmless for local use —
-port 3333 runs plain WS (no TLS) which is all we need locally.
+```bash
+docker run -d --name ome \
+  -p 1935:1935 \
+  -p 3333:3333 \
+  -p 3478:3478 \
+  -p 10000-10009:10000-10009/udp \
+  -e OME_HOST_IP=127.0.0.1 \
+  airensoft/ovenmediaengine:latest
+```
+
+After creating the container, push the tuned Server.xml into it:
+
+```bash
+docker cp config/ome-Server.xml ome:/opt/ovenmediaengine/bin/origin_conf/Server.xml
+docker restart ome
+```
+
+**Why these flags matter:**
+
+| Flag | Reason |
+|---|---|
+| `-e OME_HOST_IP=127.0.0.1` | Without this, OME advertises its Docker-internal IP in ICE candidates. The browser can't reach that IP on macOS — WebRTC fails with error 5111. |
+| `-p 3478:3478` | TCP relay port. Required because OME default config has `TcpForce=true`. Missing this port = ICE timeout. |
+| `config/ome-Server.xml` | Sets `TcpForce=false` so WebRTC uses direct UDP (lower latency). Must be applied after container creation. |
+
+**Stream URLs:**
+- OBS → OME RTMP ingest: `rtmp://localhost:1935/app/stream`
+- OvenPlayer (local): `ws://localhost:3333/app/stream`
+- OvenPlayer (production, via tunnel): `wss://stream-smash.felixscherz.me/app/stream`
+
+The SSL cert error in `docker logs ome` is harmless locally — port 3333 runs
+plain WS without TLS.
+
+---
+
+## OBS Studio Settings (working configuration)
+
+OBS is already configured. If it ever needs to be set up again:
+
+**Settings → Stream:**
+- Service: `Custom`
+- Server: `rtmp://localhost:1935/app`
+- Stream Key: `stream`
+
+**Settings → Output → Mode: Advanced → Streaming tab:**
+- Encoder: `Apple VT H264 Hardware Encoder` (preferred on Apple Silicon)
+- Rate Control: `CBR`
+- Bitrate: `6000 Kbps`
+- Keyframe Interval: `1` second
+- Profile: `Baseline`
+- **Use B-Frames: unchecked** ← critical. B-frames cause WebRTC stuttering.
+
+**Settings → Video:**
+- Base Resolution: `1920x1080` (or match Dolphin window)
+- Output Resolution: `1280x720`
+- Common FPS Values: **`60`** ← must match Melee's 60fps or every other frame drops
+
+**Source:** Window Capture → `Slippi Dolphin`
+
+---
+
+## OvenPlayer Configuration (low-latency)
+
+Use this config in the dashboard or any test page for lowest latency:
+
+```js
+OvenPlayer.create('player_id', {
+  sources: [{ label: 'WebRTC', type: 'webrtc', file: 'ws://localhost:3333/app/stream' }],
+  autoStart: true,
+  mute: false,
+  webrtcConfig: {
+    timeoutMaxRetry: 4,
+    connectionTimeout: 10000,
+    playoutDelayHint: 0,   // request zero playout delay from browser
+  },
+});
+```
 
 ---
 
@@ -318,7 +413,6 @@ assign the instance to `frontend.app._orchestrator` before `uvicorn` starts.
 
 - [ ] frp tunnel not configured (needs Hetzner IP + auth token)
 - [ ] nginx configs not deployed to Hetzner VM
-- [ ] OBS not yet configured to stream to OME
 - [ ] Orchestrator and FastAPI server not yet wired together into a single launcher
 - [ ] Ollama / Llama3 not installed (LLM decisions will always fall back to None)
 - [ ] No test suite
