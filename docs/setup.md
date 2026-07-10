@@ -34,7 +34,10 @@ Verify: `curl http://localhost:11434/api/tags`
 docker run -d --name ome \
   -p 1935:1935 \
   -p 3333:3333 \
+  -p 3478:3478 \
   -p 10000-10009:10000-10009/udp \
+  -e OME_HOST_IP=127.0.0.1 \
+  -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
   airensoft/ovenmediaengine:latest
 ```
 

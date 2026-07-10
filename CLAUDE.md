@@ -65,7 +65,7 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
 
 ```bash
 # 1. Start OvenMediaEngine
-docker start ome
+./start-ome.sh
 
 # 2. Start the unified server (FastAPI + orchestrator; launches Dolphin automatically)
 source .venv/bin/activate
@@ -309,16 +309,19 @@ The FastAPI server derives the OvenPlayer URL from this at startup.
 
 ## OvenMediaEngine (WebRTC Streaming)
 
-Container is named `ome`. Start/stop:
+Container is named `ome`. Use the script to start it:
 
 ```bash
-docker start ome
-docker stop ome
-docker logs ome   # check status
+./start-ome.sh   # creates the container if needed, starts it, waits for ready
+docker stop ome  # stop
+docker logs ome  # check status
 ```
 
-If you ever need to recreate the container (e.g. after `docker rm ome`), use
-**exactly** this command — all flags are required for correct local operation:
+`start-ome.sh` handles both cases: if the container already exists it runs
+`docker start ome`; if not it runs `docker run` with all required flags and
+the bind-mounted config. No manual `docker cp` or `docker restart` needed.
+
+The full `docker run` invocation (for reference):
 
 ```bash
 docker run -d --name ome \
@@ -327,14 +330,8 @@ docker run -d --name ome \
   -p 3478:3478 \
   -p 10000-10009:10000-10009/udp \
   -e OME_HOST_IP=127.0.0.1 \
+  -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
   airensoft/ovenmediaengine:latest
-```
-
-After creating the container, push the tuned Server.xml into it:
-
-```bash
-docker cp config/ome-Server.xml ome:/opt/ovenmediaengine/bin/origin_conf/Server.xml
-docker restart ome
 ```
 
 **Why these flags matter:**

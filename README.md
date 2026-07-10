@@ -58,10 +58,12 @@ Then start OvenMediaEngine:
 
 ```bash
 docker run -d --name ome \
-  -p 1935:1935 \       # RTMP ingest from OBS
-  -p 3333:3333/tcp \   # WebRTC signaling
-  -p 3334:3334/udp \   # WebRTC media (alternate)
-  -p 10000-10009:10000-10009/udp \  # WebRTC media UDP range
+  -p 1935:1935 \
+  -p 3333:3333 \
+  -p 3478:3478 \
+  -p 10000-10009:10000-10009/udp \
+  -e OME_HOST_IP=127.0.0.1 \
+  -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
   airensoft/ovenmediaengine:latest
 ```
 

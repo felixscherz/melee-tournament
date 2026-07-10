@@ -19,5 +19,6 @@ stream   = "stream-smash.felixscherz.me"
 # Local OBS → OvenMediaEngine RTMP ingest
 rtmp_ingest   = "rtmp://localhost:1935/app/stream"
 # Set to "local" to use ws://localhost:3333 (no TLS), or "production" to use the stream domain
-mode          = "local"
+# mode          = "local"
+mode          = "production"
 webrtc_signal = "ws://localhost:3333/app/stream"

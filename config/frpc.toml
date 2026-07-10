@@ -2,7 +2,7 @@
 # Install: brew install frpc
 # Run:     frpc -c config/frpc.toml
 
-serverAddr = "YOUR_HETZNER_IP"   # Replace with your Hetzner VM public IP
+serverAddr = "78.46.220.137"   # Replace with your Hetzner VM public IP
 serverPort = 7000
 auth.token = "CHANGE_ME_SECRET"  # Must match frps.toml
 
@@ -12,15 +12,34 @@ name       = "web"
 type       = "tcp"
 localIP    = "127.0.0.1"
 localPort  = 8080
-remotePort = 80
+remotePort = 8080
 
 # OvenMediaEngine WebRTC signaling (WSS)
+# remotePort is 13333, NOT 3333: the Hetzner VM already runs another service
+# (an Express app) on 3333, which would otherwise intercept the signaling and
+# return 404. nginx fronts this (stream-smash → 127.0.0.1:13333), so 13333 only
+# needs to be free on the VM loopback — no firewall change required.
+# localIP is ::1 (IPv6), NOT 127.0.0.1: Obsidian's presentation-preview plugin
+# holds IPv4 127.0.0.1:3333 on this Mac, so Docker/OME only bound the IPv6
+# loopback ([::]:3333). Connecting over 127.0.0.1 would tunnel into Obsidian
+# (an Express server → 404); ::1 reaches OME. See DEPLOYMENT.md.
 [[proxies]]
 name       = "webrtc-signal"
 type       = "tcp"
-localIP    = "127.0.0.1"
+localIP    = "::1"
 localPort  = 3333
-remotePort = 3333
+remotePort = 13333
+
+# OvenMediaEngine WebRTC media TCP relay (TURN/TCP).
+# With TcpForce=true in ome-Server.xml, WebRTC media rides this TCP tunnel
+# instead of raw UDP, which does not survive frp. Open TCP 3478 in the
+# Hetzner firewall.
+[[proxies]]
+name       = "webrtc-tcp-relay"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 3478
+remotePort = 3478
 
 # OvenMediaEngine WebRTC media UDP (port range)
 [[proxies]]
