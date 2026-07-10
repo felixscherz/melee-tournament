@@ -291,6 +291,22 @@ class MeleeOrchestrator:
                 # than P1 pre-selecting a character. See _park_idle.
                 self._park_idle(gs)
                 return
+            # START must fire only once EVERY player has locked in their
+            # target character. choose_character(start=True) presses START the
+            # instant the last controller's own coin is down — regardless of
+            # whether the other ports are still navigating to their picks. On a
+            # fresh match this is usually harmless, but returning to CSS after a
+            # finish leaves the previous roster still committed: the last port's
+            # coin is already down, so START fires before the newly-toggled
+            # characters lock in and we slide into stage select with the wrong
+            # (old) roster. Gate START on all four being on the correct char
+            # with the coin down — the exact per-port condition the helper uses.
+            all_locked = all(
+                (ps := gs.players.get(p.port)) is not None
+                and ps.coin_down
+                and ps.character is CHARACTER_MAP.get(p.character, melee.Character.FOX)
+                for p in players
+            )
             for i, p in enumerate(players):
                 p_state = gs.players.get(p.port)
                 # menuhelper bug: `or is_holding_cpu_slider` overrides
@@ -307,7 +323,7 @@ class MeleeOrchestrator:
                     cpu_level=0,
                     costume=0,
                     swag=False,
-                    start=(i == len(players) - 1),
+                    start=(i == len(players) - 1) and all_locked,
                 )
 
         elif menu in (melee.Menu.MAIN_MENU, melee.Menu.PRESS_START):
