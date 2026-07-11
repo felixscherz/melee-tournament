@@ -14,6 +14,14 @@ Rules enforced:
     not be referenced or called.
   * Dunder attribute access (`__globals__`, `__subclasses__`, `__class__`, ...)
     is rejected — these are the classic `().__class__.__bases__` sandbox breaks.
+  * Frame / generator / traceback introspection attributes (`f_globals`,
+    `gi_frame`, `cr_frame`, `tb_frame`, ...) are rejected too — they are the
+    *non*-dunder gateway to the builtins dict, e.g. a generator's
+    `gi_frame.f_builtins["__import__"]` reaches `__import__` without ever
+    naming a dunder attribute.
+  * Dunder-looking string literals (`"__globals__"`, `"__import__"`, ...) are
+    rejected anywhere they appear, so reflection via `obj[<string>]` subscripts
+    or `getattr`-style string keys can't smuggle a dunder past the AST check.
   * A top-level `Bot` class exposing an `act` method must be present, so a
     valid-but-useless upload fails fast here instead of at match time.
 
@@ -33,6 +41,23 @@ BANNED_NAMES = {
     "eval", "exec", "compile", "__import__", "open", "input", "breakpoint",
     "globals", "locals", "vars", "getattr", "setattr", "delattr",
     "memoryview", "exit", "quit", "help",
+}
+
+# Non-dunder attributes that expose an execution frame, its globals, or the
+# builtins dict — the reflection path that reaches `__import__`/`eval` WITHOUT
+# ever naming a dunder. A generator/coroutine/traceback hands you a frame
+# (`gi_frame`, `cr_frame`, `tb_frame`), a frame hands you `f_builtins` /
+# `f_globals`, and from there `[...]` subscripting reaches anything. Blocking
+# these attribute names closes that gateway; blocking dunder string literals
+# (below) closes the subscript key that would follow.
+BANNED_ATTRS = {
+    "f_globals", "f_builtins", "f_locals", "f_back", "f_code", "f_trace",
+    "gi_frame", "gi_code", "gi_yieldfrom",
+    "cr_frame", "cr_code", "cr_await",
+    "ag_frame", "ag_code",
+    "tb_frame", "tb_next", "tb_lasti",
+    "func_globals", "func_code",
+    "mro",
 }
 
 MAX_CODE_BYTES = 100_000
@@ -94,11 +119,25 @@ def validate_bot_code(code: str) -> None:
             if _is_dunder(node.id):
                 raise BotValidationError(f"Use of dunder name '{node.id}' is not allowed.")
 
-        # --- Dunder attribute access (sandbox escapes) ---
+        # --- Dunder / introspection attribute access (sandbox escapes) ---
         elif isinstance(node, ast.Attribute):
             if _is_dunder(node.attr):
                 raise BotValidationError(
                     f"Access to dunder attribute '.{node.attr}' is not allowed."
+                )
+            if node.attr in BANNED_ATTRS:
+                raise BotValidationError(
+                    f"Access to introspection attribute '.{node.attr}' is not allowed."
+                )
+
+        # --- Dunder-looking string literals (reflection via subscript/keys) ---
+        # A dunder name reachable only as a string — e.g. frame.f_builtins
+        # ["__import__"] or a getattr-style key — never appears as an Attribute
+        # or Name node, so catch it at the constant.
+        elif isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and _is_dunder(node.value):
+                raise BotValidationError(
+                    f"Dunder string literal '{node.value}' is not allowed."
                 )
 
     if not _has_bot_with_act(tree):

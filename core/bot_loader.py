@@ -13,6 +13,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Optional
 
+from core.bot_validator import BotValidationError, validate_bot_code
+
 log = logging.getLogger(__name__)
 
 REQUIRED_METHODS = ("act",)
@@ -27,8 +29,25 @@ class BotLoader:
         self._active_mtime: float = 0.0
 
     def load(self, script_path: Path) -> bool:
-        """Load and validate a bot script. Returns True on success."""
+        """Load and validate a bot script. Returns True on success.
+
+        Static safety validation runs here, at the single point where code is
+        actually executed — not just in the API layer. Any path that reaches
+        `exec_module` (direct on-disk edits, mtime hot-reloads) is therefore
+        forced through the same check, so the validator cannot be bypassed by
+        writing to `uploads/` out of band.
+        """
         try:
+            try:
+                source = script_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                log.error("Could not read bot %s: %s", script_path.name, exc)
+                return False
+            try:
+                validate_bot_code(source)
+            except BotValidationError as exc:
+                log.error("Rejected unsafe bot %s: %s", script_path.name, exc)
+                return False
             mod = self._import(script_path)
             if not self._validate(mod):
                 return False
