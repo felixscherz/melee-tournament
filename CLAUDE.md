@@ -9,7 +9,7 @@ Read it fully before touching any code.
 
 A self-hosted platform running on Felix's MacBook that lets a team submit Python
 bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
-`libmelee` and Slippi Dolphin. Games are streamed live to the team over WebRTC.
+`libmelee` and Slippi Dolphin. Games are streamed live to the team via Twitch.
 
 ---
 
@@ -29,26 +29,23 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
                        /api/bot/upload — hot-reload bot scripts
                        /api/prompt — override LLM prompt
                               │
-                   ┌──────────┴──────────┐
-                   │                     │
-             [WebSocket]           [REST API]
+                    ┌──────────┴──────────┐
+                    │                     │
+              [WebSocket]           [REST API]
 
-[OBS Studio] ──RTMP──► [OvenMediaEngine (Podman, loopback-published)]
-                              │
-                    [stream_forwarder.py]  (0.0.0.0 → 127.0.0.1 shim; gvproxy can't
-                              │              serve the VPN interface — see below)
-                              │
-                    [WireGuard wg0]  Mac 10.0.0.20 ↔ 10.0.0.1 Hetzner VM
-                              │        (on-demand: ./stream-vpn.sh up/down)
-                              │
-                      [nginx TLS termination on VM]
-                      smash.felixscherz.me        → 10.0.0.20:8080  (FastAPI)
-                      stream-smash.felixscherz.me → 10.0.0.20:3355  (OME signaling)
-                      UDP 10000-10004 ─DNAT+MASQ─► 10.0.0.20        (OME media)
+[OBS Studio] ──RTMP──► [Twitch CDN]  (direct ingest; one upload, fans out to viewers)
+
+[WireGuard wg0]  Mac 10.0.0.20 ↔ 10.0.0.1 Hetzner VM
+                        │        (on-demand: ./stream-vpn.sh up/down)
+                        │
+                  [nginx TLS termination on VM]
+                  smash.felixscherz.me → 10.0.0.20:8080  (FastAPI dashboard only)
 ```
 
-Full migration rationale + the two critical networking details (NAT symmetry,
-the forwarder shim) are in `VPN-MIGRATION.md`. Steady-state ops in `DEPLOYMENT.md`.
+The WireGuard tunnel is only used to expose the FastAPI dashboard publicly. The
+video stream goes directly from OBS to Twitch's CDN, so the Mac uploads one copy
+regardless of viewer count. Full migration rationale in `VPN-MIGRATION.md`;
+steady-state ops in `DEPLOYMENT.md`.
 
 ---
 
@@ -60,27 +57,22 @@ the forwarder shim) are in `VPN-MIGRATION.md`. Steady-state ops in `DEPLOYMENT.m
 | Rosetta 2 | System | Already installed |
 | Melee ISO | `assets/melee.iso` | NTSC v1.02 (GALE01 r2) |
 | Python venv | `.venv/` | Python 3.13, activate before running anything |
-| OvenMediaEngine | Podman container `ome` | RTMP 1935; WebRTC 3355 (signaling) + 10000-10009/UDP (media) published on `127.0.0.1` |
-| OBS Studio | `/Applications/OBS.app` | Configured for 60fps, 6000 Kbps, no B-frames |
+| OBS Studio | `/Applications/OBS.app` | Configured for 60fps, 6000 Kbps, no B-frames; pushes directly to Twitch |
 | wireguard-tools | `$(brew --prefix)/bin/wg` | `wg`/`wg-quick`; tunnel config `config/wireguard/wg0-smash.conf` (gitignored) |
-| Podman | System | docker-compatible CLI; uses gvproxy for port forwarding (does not serve the VPN interface) |
 
 ---
 
 ## How to Start Everything (working local stack)
 
 ```bash
-# 1. Start OvenMediaEngine
-./start-ome.sh
-
-# 2. Start the unified server (FastAPI + orchestrator; launches Dolphin automatically)
+# 1. Start the unified server (FastAPI + orchestrator; launches Dolphin automatically)
 source .venv/bin/activate
 python main.py
 
-# 3. Open OBS and click Start Streaming
-#    (OBS is already configured — just hit the button)
+# 2. Open OBS and click Start Streaming
+#    (OBS is already configured to push directly to Twitch — just hit the button)
 
-# 4. Open the lobby, pick 4 characters, start a match
+# 3. Open the lobby, pick 4 characters, start a match
 open http://localhost:8080/lobby
 ```
 
@@ -304,61 +296,11 @@ frontend = "smash.felixscherz.me"
 stream   = "stream-smash.felixscherz.me"
 
 [streaming]
-mode          = "local"        # "local" = ws://localhost:3355, "production" = wss://stream domain
-webrtc_signal = "ws://localhost:3355/app/stream"
+# OBS streams directly to Twitch (no WebRTC/OME relay). Set the Twitch channel
+# name (the part after twitch.tv/) so the embedded player works on /watch and
+# /lobby.
+twitch_channel = "v4in11111"
 ```
-
-Switch to `mode = "production"` when the WireGuard tunnel + nginx are active
-(`./stream-vpn.sh up`). The FastAPI server derives the OvenPlayer URL from this
-at startup.
-
----
-
-## OvenMediaEngine (WebRTC Streaming)
-
-Container is named `ome`. Use the script to start it:
-
-```bash
-./start-ome.sh   # creates the container if needed, starts it, waits for ready
-docker stop ome  # stop
-docker logs ome  # check status
-```
-
-`start-ome.sh` handles both cases: if the container already exists it runs
-`docker start ome`; if not it runs `docker run` with all required flags and
-the bind-mounted config. No manual `docker cp` or `docker restart` needed.
-
-The full `docker run` invocation (for reference):
-
-```bash
-docker run -d --name ome \
-  -p 1935:1935 \
-  -p 127.0.0.1:3355:3333 \
-  -p 127.0.0.1:10000-10009:10000-10009/udp \
-  -e OME_HOST_IP=127.0.0.1 \
-  -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
-  airensoft/ovenmediaengine:latest
-```
-
-(`start-ome.sh` sets `OME_HOST_IP` to the public IP `78.46.220.137` in
-`mode = "production"` so ICE candidates advertise a reachable address.)
-
-**Why these flags matter:**
-
-| Flag | Reason |
-|---|---|
-| `-e OME_HOST_IP=…` | Without this, OME advertises its container-internal IP in ICE candidates, unreachable from the browser (WebRTC error 5111). Local = `127.0.0.1`; production = the public IP. |
-| `-p 127.0.0.1:3355:3333` | Signaling on host port `3355` (sidesteps the Obsidian `3333` collision), bound to **loopback** so `stream_forwarder.py` can own the VPN IP without a bind conflict. |
-| `-p 127.0.0.1:10000-10009:…/udp` | WebRTC media, loopback-bound for the same reason. Production traffic arrives via the forwarder shim, not directly (gvproxy can't serve the VPN). |
-| `config/ome-Server.xml` | Sets `TcpForce=false` so WebRTC uses direct UDP (lower latency, no TCP relay). |
-
-**Stream URLs:**
-- OBS → OME RTMP ingest: `rtmp://localhost:1935/app/stream`
-- OvenPlayer (local): `ws://localhost:3355/app/stream`
-- OvenPlayer (production, via tunnel): `wss://stream-smash.felixscherz.me/app/stream`
-
-The SSL cert error in `docker logs ome` is harmless locally — port 3355 runs
-plain WS without TLS (nginx on the VM terminates TLS for production).
 
 ---
 
@@ -368,8 +310,8 @@ OBS is already configured. If it ever needs to be set up again:
 
 **Settings → Stream:**
 - Service: `Custom`
-- Server: `rtmp://localhost:1935/app`
-- Stream Key: `stream`
+- Server: `rtmp://live.twitch.tv/app`
+- Stream Key: `<your Twitch stream key>`
 
 **Settings → Output → Mode: Advanced → Streaming tab:**
 - Encoder: `Apple VT H264 Hardware Encoder` (preferred on Apple Silicon)
@@ -377,7 +319,7 @@ OBS is already configured. If it ever needs to be set up again:
 - Bitrate: `6000 Kbps`
 - Keyframe Interval: `1` second
 - Profile: `Baseline`
-- **Use B-Frames: unchecked** ← critical. B-frames cause WebRTC stuttering.
+- **Use B-Frames: unchecked** ← critical for streaming quality.
 
 **Settings → Video:**
 - Base Resolution: `1920x1080` (or match Dolphin window)
@@ -388,81 +330,26 @@ OBS is already configured. If it ever needs to be set up again:
 
 ---
 
-## OvenPlayer Configuration (low-latency)
+## WireGuard Tunnel (public dashboard exposure)
 
-Use this config in the dashboard or any test page for lowest latency:
-
-```js
-OvenPlayer.create('player_id', {
-  sources: [{ label: 'WebRTC', type: 'webrtc', file: 'ws://localhost:3355/app/stream' }],
-  autoStart: true,
-  mute: false,
-  webrtcConfig: {
-    timeoutMaxRetry: 4,
-    connectionTimeout: 10000,
-    playoutDelayHint: 0,   // request zero playout delay from browser
-  },
-});
-```
-
----
-
-## WireGuard Tunnel (public internet exposure)
-
-Production streaming runs over a **WireGuard** tunnel to the Hetzner VM (replaced
-the old frp tunnel). The Mac joins the `10.0.0.0/24` VPN **on-demand**, only while
-streaming. Full setup + rationale in `VPN-MIGRATION.md`; steady-state ops in
-`DEPLOYMENT.md`.
+The FastAPI dashboard is exposed to the internet over a **WireGuard** tunnel to
+the Hetzner VM with nginx TLS termination. The Mac joins the `10.0.0.0/24` VPN
+**on-demand**, only while the dashboard needs to be public. Full setup +
+rationale in `VPN-MIGRATION.md`; steady-state ops in `DEPLOYMENT.md`.
 
 ```bash
-./stream-vpn.sh up       # join VPN + start the OME forwarder shim
-./stream-vpn.sh status   # handshake + forwarder health
-./stream-vpn.sh down     # leave VPN + stop forwarders
+./stream-vpn.sh up       # join VPN (dashboard goes public at smash.felixscherz.me)
+./stream-vpn.sh status   # show handshake
+./stream-vpn.sh down     # leave VPN
 ```
 
 - Mac tunnel config: `config/wireguard/wg0-smash.conf` (gitignored; private key
   stays on the Mac). Mac = `10.0.0.20`, VM = `10.0.0.1`.
-- VM side (WG server peer + media DNAT/MASQ, nginx upstreams, TLS) is
-  **Ansible-managed in the `home` repo** — deploy tags `vpn` and `proxy`.
-- Public routing: `smash` → `10.0.0.20:8080` (FastAPI); `stream-smash` →
-  `10.0.0.20:3355` (OME signaling, via the shim); UDP `10000-10004` DNAT+MASQ →
-  `10.0.0.20` (OME media, via the shim).
-
-**The forwarder shim (`stream_forwarder.py`) is mandatory:** Podman/Docker's
-gvproxy does not serve the WireGuard interface, so the VM cannot reach OME's
-loopback-published ports directly. The shim binds `0.0.0.0` (which *does* receive
-tunnel traffic) and relays to `127.0.0.1`. `stream-vpn.sh` starts/stops it with
-the tunnel. (Note: `socat` does **not** work here — its listening socket doesn't
-receive utun traffic on macOS; a plain Python socket does. Don't "simplify" it
-back to socat.)
-
----
-
-## Scaling to many viewers — Twitch relay
-
-The WebRTC path fans out **per viewer from the Mac**, so it's capped by the Mac's
-home upload bandwidth (~N × bitrate). Fine for a handful of viewers; ~30 viewers
-× 6 Mbps ≈ 180 Mbps is far beyond a home uplink. For a crowd, relay to Twitch's
-CDN — OME pushes **one** copy and Twitch fans out:
-
-```bash
-echo "<twitch-stream-key>" > config/twitch.key   # gitignored
-./twitch-push.sh start    # relay app/stream -> Twitch (bypass_video H264 + aac_audio)
-./twitch-push.sh status
-./twitch-push.sh stop
-```
-
-Mechanics: OME's REST API (`127.0.0.1:8081`, enabled in `ome-Server.xml`
-`<Managers>`, token `OME_API_TOKEN`, default `smash-ome-api`) drives
-push-publishing via `POST .../apps/app:startPush`. The push uses the `bypass_stream`
-profile's H264 passthrough + AAC (no re-encode) — exactly what Twitch wants.
-
-**The `app` application must have `<Push />` in its `<Publishers>`** (it's enabled
-in `ome-Server.xml`). Without it, OME logs "Push publisher is disabled" at startup
-and `startPush` fails with a misleading `Could not find application` 404. Same
-applies to `<File />` if you ever want the record API. The
-low-latency WebRTC path keeps working alongside it: WebRTC for small groups,
-Twitch for crowds (Twitch latency ~2-5s vs sub-second WebRTC).
+- VM side (WG server peer, nginx upstreams, TLS) is **Ansible-managed in the
+  `home` repo** — deploy tags `vpn` and `proxy`.
+- Public routing: `smash.felixscherz.me` → `10.0.0.20:8080` (FastAPI only).
+  The video stream goes directly from OBS to Twitch, so the tunnel does not
+  carry any video traffic.
 
 ## Web Dashboard
 
@@ -472,7 +359,7 @@ would be missing). `main.py` injects the `MeleeOrchestrator` instance into
 
 Routes (`frontend/app.py`):
 - `GET /lobby` — pick 4 players/characters and start a match (`/` redirects here)
-- `GET /watch` — OvenPlayer stream embed + live scores
+- `GET /watch` — Twitch stream embed + live scores
 - `POST /api/start` — queue a match; body: `{"players": [{port, name, character} × 4]}`
 - `POST /api/stop` — reset app state
 - `GET /api/state` — phase, scores, winner

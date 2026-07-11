@@ -4,7 +4,6 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Smash Tournament — Lobby</title>
-  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; min-height: 100vh; }
@@ -27,17 +26,8 @@
     .stream-wrap { max-width: 1100px; margin: 1.5rem auto 0; padding: 0 1.5rem; }
     .stream-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; }
     .stream-head h2 { margin-bottom: 0; }
-    #lobby_stream, #lobby_twitch { width: 100%; aspect-ratio: 16/9; background: #000; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; }
+    #lobby_twitch { width: 100%; aspect-ratio: 16/9; background: #000; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; }
     #lobby_twitch iframe { width: 100%; height: 100%; border: 0; display: block; }
-    .source-toggle { display: flex; }
-    .source-toggle button {
-      font-family: inherit; font-size: 0.7rem; letter-spacing: 1px; cursor: pointer;
-      padding: 0.35rem 0.8rem; border: none; background: #2a2a4a; color: #9090c0;
-    }
-    .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
-    .source-toggle button:last-child  { border-radius: 0 4px 4px 0; }
-    .source-toggle button.active { background: #e94560; color: #fff; }
-    .source-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
 
     main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
 
@@ -148,15 +138,7 @@
 <div class="stream-wrap">
   <div class="stream-head">
     <h2>LIVE STREAM</h2>
-    {% if twitch_channel %}
-    <div class="source-toggle" id="source-toggle">
-      <button type="button" data-src="twitch">TWITCH</button>
-      <button type="button" data-src="webrtc" disabled
-              title="Disabled for large audiences — local WebRTC only">LOW-LATENCY</button>
-    </div>
-    {% endif %}
   </div>
-  <div id="lobby_stream"></div>
   <div id="lobby_twitch"></div>
 </div>
 
@@ -196,7 +178,7 @@
 
   <div class="start-row" style="flex-direction:column; align-items:center; gap:0.75rem;">
     <div id="obs-check" style="font-size:0.75rem; color:#6060a0;">
-      Checking OBS stream...
+      Make sure OBS is streaming to Twitch before starting a match.
     </div>
     <button id="start-btn" onclick="startGame()">START MATCH</button>
     <button id="reset-btn" onclick="resetGame()"
@@ -252,30 +234,13 @@
 </main>
 
 <script>
-// Live stream embed — the same feed shown on /watch. Dolphin/OBS run
-// continuously, so the stream is available even before a match starts.
-// Twitch (fans out via its CDN) is the default so showing the lobby to a crowd
-// doesn't open one per-viewer WebRTC connection from the Mac; the LOW-LATENCY
-// toggle switches to the direct WebRTC feed when only a few people are watching.
+// Live stream embed — OBS pushes directly to Twitch (no WebRTC/OME relay).
+// Dolphin/OBS run continuously, so the stream is available even before a
+// match starts.
 const twitchChannel = {{ twitch_channel|tojson }};
 const twitchParents = {{ twitch_parents|tojson }};
-const streamEl = document.getElementById('lobby_stream');
 const twitchEl = document.getElementById('lobby_twitch');
-let ovenPlayer = null;
 
-function initWebRTC() {
-  if (ovenPlayer) return;
-  ovenPlayer = OvenPlayer.create('lobby_stream', {
-    sources: [{ label: 'WebRTC', type: 'webrtc', file: '{{ webrtc_url }}' }],
-    autoStart: true, mute: true,
-    webrtcConfig: { timeoutMaxRetry: 4, connectionTimeout: 10000, playoutDelayHint: 0 },
-  });
-}
-function destroyWebRTC() {
-  if (!ovenPlayer) return;
-  try { ovenPlayer.remove(); } catch (e) {}
-  ovenPlayer = null; streamEl.innerHTML = '';
-}
 function initTwitch() {
   if (twitchEl.querySelector('iframe')) return;
   const parents = twitchParents.map(p => 'parent=' + encodeURIComponent(p)).join('&');
@@ -285,26 +250,7 @@ function initTwitch() {
   iframe.allowFullscreen = true;
   twitchEl.appendChild(iframe);
 }
-function destroyTwitch() { twitchEl.innerHTML = ''; }
-
-// Only open the WebRTC connection when WebRTC is actually selected, so a crowd
-// defaulting to Twitch never fans out from the Mac.
-function showSource(src) {
-  if (src === 'twitch') {
-    destroyWebRTC(); initTwitch();
-    twitchEl.style.display = ''; streamEl.style.display = 'none';
-  } else {
-    destroyTwitch(); initWebRTC();
-    streamEl.style.display = ''; twitchEl.style.display = 'none';
-  }
-  document.querySelectorAll('.source-toggle button').forEach(
-    b => b.classList.toggle('active', b.dataset.src === src));
-}
-document.querySelectorAll('.source-toggle button').forEach(
-  b => b.addEventListener('click', () => showSource(b.dataset.src)));
-
-// Default to Twitch when a channel is configured (safe for many viewers).
-showSource(twitchChannel ? 'twitch' : 'webrtc');
+initTwitch();
 
 const charDescriptions = {
   FOX:    "Pure aggression — chases and up-smashes relentlessly.",
@@ -441,27 +387,9 @@ async function copyExample() {
   catch (e) { /* clipboard blocked; ignore */ }
 }
 
-// Check OBS stream health via OME WebSocket
-async function checkStream() {
-  const el = document.getElementById('obs-check');
-  try {
-    const ws = new WebSocket('{{ webrtc_url }}');
-    ws.onopen = () => {
-      el.textContent = '✓ OBS stream detected — ready to go';
-      el.style.color = '#81c784';
-      ws.close();
-    };
-    ws.onerror = () => {
-      el.textContent = '⚠ No OBS stream detected — start streaming in OBS first';
-      el.style.color = '#e94560';
-    };
-    setTimeout(() => { if (ws.readyState === 0) ws.close(); }, 3000);
-  } catch(e) {
-    el.textContent = '⚠ Could not check OBS stream status';
-    el.style.color = '#888';
-  }
-}
-checkStream();
+// Note: OBS stream health check removed (was OME WebSocket based).
+// With OBS pushing directly to Twitch there's no local endpoint to probe; the
+// operator just needs to hit "Start Streaming" in OBS before starting a match.
 
 // Show reset button if a game is already running
 async function checkPhase() {

@@ -1,4 +1,5 @@
 """FastAPI server — lobby, watch, bot upload, and WebSocket game state."""
+
 import asyncio
 import json
 import logging
@@ -19,15 +20,19 @@ from core.roster import SELECTABLE_CHARACTERS, is_valid_character
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
-BOTS_DIR    = Path(__file__).parent.parent / "core" / "bots"
-UPLOAD_DIR  = Path(__file__).parent.parent / "uploads"
+BOTS_DIR = Path(__file__).parent.parent / "core" / "bots"
+UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 config = toml.load(CONFIG_PATH)
 
 app = FastAPI(title="Smash Tournament")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).parent / "static")),
+    name="static",
+)
 
 # Injected by main.py
 _orchestrator = None
@@ -43,30 +48,22 @@ SUPPORTED_CHARACTERS = SELECTABLE_CHARACTERS
 # character-agnostic generic bot below.
 GENERIC_BOT = BOTS_DIR / "generic.py"
 BOT_FILES = {
-    "FOX":       BOTS_DIR / "fox.py",
-    "MARTH":     BOTS_DIR / "marth.py",
+    "FOX": BOTS_DIR / "fox.py",
+    "MARTH": BOTS_DIR / "marth.py",
     "CPTFALCON": BOTS_DIR / "falcon.py",
-    "FALCO":     BOTS_DIR / "falco.py",
+    "FALCO": BOTS_DIR / "falco.py",
 }
 
 
 def _default_bot_path(character: str) -> Path:
     return BOT_FILES.get(character, GENERIC_BOT)
 
-def _webrtc_url() -> str:
-    mode = config["streaming"].get("mode", "local")
-    if mode == "production":
-        return f"wss://{config['domains']['stream']}/app/stream"
-    return config["streaming"]["webrtc_signal"]
-
 
 def _twitch_context() -> dict:
     """Twitch embed params shared by every page with a live player.
 
-    When `twitch_channel` is set, pages default to the Twitch embed (fans out
-    via Twitch's CDN, so it scales to a crowd) and expose a toggle back to the
-    direct WebRTC feed for low latency. Twitch's iframe requires the exact
-    host(s) serving the page in `parent`.
+    OBS streams directly to Twitch (no WebRTC/OME relay). Twitch's iframe
+    requires the exact host(s) serving the page in `parent`.
     """
     return {
         "twitch_channel": config["streaming"].get("twitch_channel", "").strip(),
@@ -78,6 +75,7 @@ def _twitch_context() -> dict:
 #  Pages                                                               #
 # ------------------------------------------------------------------ #
 
+
 @app.get("/", response_class=RedirectResponse)
 async def root():
     return RedirectResponse("/lobby")
@@ -85,12 +83,15 @@ async def root():
 
 @app.get("/lobby", response_class=HTMLResponse)
 async def lobby(request: Request):
-    return templates.TemplateResponse(request, "lobby.html", {
-        "characters": SUPPORTED_CHARACTERS,
-        "phase": app_state.phase.value,
-        "webrtc_url": _webrtc_url(),
-        **_twitch_context(),
-    })
+    return templates.TemplateResponse(
+        request,
+        "lobby.html",
+        {
+            "characters": SUPPORTED_CHARACTERS,
+            "phase": app_state.phase.value,
+            **_twitch_context(),
+        },
+    )
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -102,22 +103,30 @@ async def admin(request: Request):
 async def watch(request: Request):
     if app_state.phase == Phase.IDLE:
         return RedirectResponse("/lobby")
-    return templates.TemplateResponse(request, "watch.html", {
-        "webrtc_url": _webrtc_url(),
-        **_twitch_context(),
-        "players": [
-            {"port": p.port, "name": p.name, "character": SUPPORTED_CHARACTERS.get(p.character, p.character)}
-            for p in app_state.players
-        ],
-    })
+    return templates.TemplateResponse(
+        request,
+        "watch.html",
+        {
+            **_twitch_context(),
+            "players": [
+                {
+                    "port": p.port,
+                    "name": p.name,
+                    "character": SUPPORTED_CHARACTERS.get(p.character, p.character),
+                }
+                for p in app_state.players
+            ],
+        },
+    )
 
 
 # ------------------------------------------------------------------ #
 #  API                                                                 #
 # ------------------------------------------------------------------ #
 
+
 class StartRequest(BaseModel):
-    players: list[dict]   # [{port, name, character, code?}]
+    players: list[dict]  # [{port, name, character, code?}]
 
 
 @app.post("/api/validate")
@@ -142,7 +151,9 @@ def _resolve_bot_path(port: int, character: str, code: str | None) -> Path:
     try:
         validate_bot_code(code)
     except BotValidationError as exc:
-        raise HTTPException(status_code=400, detail=f"Player {port} code rejected: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Player {port} code rejected: {exc}"
+        )
     dest = UPLOAD_DIR / f"player{port}.py"
     dest.write_text(code, encoding="utf-8")
     return dest
@@ -162,12 +173,14 @@ async def start_game(body: StartRequest):
             raise HTTPException(status_code=400, detail=f"Unknown character: {char}")
         port = int(p["port"])
         bot_path = _resolve_bot_path(port, char, p.get("code"))
-        configs.append(PlayerConfig(
-            port=port,
-            name=p.get("name", f"Player {port}"),
-            character=char,
-            bot_path=bot_path,
-        ))
+        configs.append(
+            PlayerConfig(
+                port=port,
+                name=p.get("name", f"Player {port}"),
+                character=char,
+                bot_path=bot_path,
+            )
+        )
 
     if _orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
@@ -215,6 +228,7 @@ async def get_last_form():
 # ------------------------------------------------------------------ #
 #  WebSocket — live game state push                                    #
 # ------------------------------------------------------------------ #
+
 
 @app.websocket("/ws/gamestate")
 async def gamestate_ws(websocket: WebSocket):

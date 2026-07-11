@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Smash Tournament — Live</title>
-  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; }
@@ -173,28 +172,33 @@
 </div>
 
 <script src="/static/dashboard.js"></script>
-<script>
-  // OvenPlayer WebRTC setup
-  const player = OvenPlayer.create('player_id', {
-    sources: [{
-      label: 'WebRTC',
-      type: 'webrtc',
-      file: '{{ webrtc_url }}'
-    }],
-    autoStart: true,
-    mute: false,
-  });
+  <script>
+    // Twitch embed (OBS pushes directly to Twitch). Note: this page is not
+    // currently served by any route; if wired up, pass twitch_channel +
+    // twitch_parents via _twitch_context() in app.py.
+    const twitchChannel = {{ twitch_channel|default('"')|tojson }};
+    const twitchParents = {{ twitch_parents|default('[]')|tojson }};
+    const playerEl = document.getElementById('player_id');
+    if (twitchChannel) {
+      const parents = twitchParents.map(p => 'parent=' + encodeURIComponent(p)).join('&');
+      const iframe = document.createElement('iframe');
+      iframe.src = `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&${parents}&muted=false&autoplay=true`;
+      iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+      iframe.setAttribute('allow', 'autoplay; fullscreen');
+      iframe.allowFullscreen = true;
+      playerEl.appendChild(iframe);
+    }
 
-  // Drag-and-drop
-  const dropZone = document.getElementById('drop-zone');
-  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('over');
-    const file = e.dataTransfer.files[0];
-    if (file) uploadBot(file);
-  });
-</script>
+    // Drag-and-drop
+    const dropZone = document.getElementById('drop-zone');
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('over');
+      const file = e.dataTransfer.files[0];
+      if (file) uploadBot(file);
+    });
+  </script>
 </body>
 </html>

@@ -4,7 +4,6 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Smash Tournament — Live</title>
-  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; }
@@ -30,17 +29,8 @@
     }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-    #player_id, #twitch_player { width: 100%; aspect-ratio: 16/9; background: #000; }
+    #twitch_player { width: 100%; aspect-ratio: 16/9; background: #000; }
     #twitch_player iframe { width: 100%; height: 100%; border: 0; display: block; }
-    .source-toggle { display: flex; }
-    .source-toggle button {
-      font-family: inherit; font-size: 0.7rem; letter-spacing: 1px; cursor: pointer;
-      padding: 0.35rem 0.8rem; border: none; background: #2a2a4a; color: #9090c0;
-    }
-    .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
-    .source-toggle button:last-child  { border-radius: 0 4px 4px 0; }
-    .source-toggle button.active { background: #e94560; color: #fff; }
-    .source-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .scoreboard {
       display: grid;
@@ -102,13 +92,6 @@
 <header>
   <h1>⚔ SMASH TOURNAMENT</h1>
   <div class="right">
-    {% if twitch_channel %}
-    <div class="source-toggle" id="source-toggle">
-      <button type="button" data-src="twitch">TWITCH</button>
-      <button type="button" data-src="webrtc" disabled
-              title="Disabled for large audiences — local WebRTC only">LOW-LATENCY</button>
-    </div>
-    {% endif %}
     <nav>
       <a href="/lobby">LOBBY</a>
       <a href="/watch" class="active">WATCH</a>
@@ -118,7 +101,6 @@
   </div>
 </header>
 
-<div id="player_id"></div>
 <div id="twitch_player"></div>
 
 <div class="scoreboard" id="scoreboard">
@@ -139,26 +121,11 @@
 <button class="back-btn" id="back-btn" onclick="location.href='/lobby'">← NEW MATCH</button>
 
 <script>
-// ---- Video source: Twitch (scales via CDN) vs WebRTC (low latency) ----
+// ---- Twitch stream embed (OBS pushes directly to Twitch) ----
 const twitchChannel = {{ twitch_channel|tojson }};
 const twitchParents = {{ twitch_parents|tojson }};
-const playerEl = document.getElementById('player_id');
 const twitchEl = document.getElementById('twitch_player');
-let ovenPlayer = null;
 
-function initWebRTC() {
-  if (ovenPlayer) return;
-  ovenPlayer = OvenPlayer.create('player_id', {
-    sources: [{ label: 'WebRTC', type: 'webrtc', file: '{{ webrtc_url }}' }],
-    autoStart: true, mute: false,
-    webrtcConfig: { timeoutMaxRetry: 4, connectionTimeout: 10000, playoutDelayHint: 0 },
-  });
-}
-function destroyWebRTC() {
-  if (!ovenPlayer) return;
-  try { ovenPlayer.remove(); } catch (e) {}
-  ovenPlayer = null; playerEl.innerHTML = '';
-}
 function initTwitch() {
   if (twitchEl.querySelector('iframe')) return;
   const parents = twitchParents.map(p => 'parent=' + encodeURIComponent(p)).join('&');
@@ -168,26 +135,7 @@ function initTwitch() {
   iframe.allowFullscreen = true;
   twitchEl.appendChild(iframe);
 }
-function destroyTwitch() { twitchEl.innerHTML = ''; }
-
-// Switch the visible player and, crucially, only open a WebRTC connection when
-// WebRTC is actually selected — so a crowd defaulting to Twitch never fans out.
-function showSource(src) {
-  if (src === 'twitch') {
-    destroyWebRTC(); initTwitch();
-    twitchEl.style.display = ''; playerEl.style.display = 'none';
-  } else {
-    destroyTwitch(); initWebRTC();
-    playerEl.style.display = ''; twitchEl.style.display = 'none';
-  }
-  document.querySelectorAll('.source-toggle button').forEach(
-    b => b.classList.toggle('active', b.dataset.src === src));
-}
-document.querySelectorAll('.source-toggle button').forEach(
-  b => b.addEventListener('click', () => showSource(b.dataset.src)));
-
-// Default to Twitch when a channel is configured (safe for many viewers).
-showSource(twitchChannel ? 'twitch' : 'webrtc');
+initTwitch();
 
 const portColors = { 1: '#4fc3f7', 2: '#ef9a9a', 3: '#a5d6a7', 4: '#ffe082' };
 

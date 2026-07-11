@@ -1,5 +1,14 @@
 # Migrating the stream from frp → WireGuard (native UDP)
 
+> **Deprecated (July 2026):** The WebRTC/OME streaming infrastructure described
+> in this document has been retired. OBS now pushes directly to Twitch's CDN, so
+> the Mac uploads one copy regardless of viewer count. The WireGuard tunnel is
+> still used, but only to expose the FastAPI dashboard (smash.felixscherz.me) -
+> it no longer carries any video traffic. OME, `stream_forwarder.py`,
+> `start-ome.sh`, `twitch-push.sh`, and `config/ome-Server.xml` have all been
+> deleted. This document is kept for historical reference; see `DEPLOYMENT.md`
+> for current operations.
+
 ## Why
 
 Production streaming currently runs over an **frp tunnel** with WebRTC media
