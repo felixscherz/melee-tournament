@@ -273,11 +273,52 @@ class Bot:
 
 See `core/bot_template.py` for a working example with a simple chase-and-attack logic.
 
-Bots currently live at fixed paths in `core/bots/` (one per character) and
-are hot-reloaded by `core/bot_loader.py` using `importlib` whenever the
-file's mtime changes — no restart required. The `/api/bot/upload` route from
-the target architecture is not implemented yet; edit the files in
-`core/bots/` directly.
+### Three ways to control a player
+
+1. **Default AI** - leave the code box and prompt box blank. Uses the
+   character's built-in bot from `core/bots/`.
+2. **Custom code** - paste a Python `Bot` class into the lobby's code box.
+   Validated by `core/bot_validator.py` and written to `uploads/player{port}.py`.
+3. **Generate from prompt** - type a natural-language prompt in the lobby's
+   prompt box and click GENERATE. The backend spawns `opencode run` with the
+   `bot-writer` agent, which writes a versioned bot file to `generated/` and
+   tests it with `core/test_bot.py` until it passes.
+
+Priority when starting a match: pasted code > generated bot > default bot.
+
+### Generated bots (`generated/`)
+
+Prompt-generated bots are written to `generated/` with versioned filenames
+(`p{port}_{char}_{timestamp}_{hash}.py`) - they are never overwritten. A
+`generated/latest.json` index maps each port to its most recently generated
+bot. The directory is gitignored.
+
+The generation pipeline:
+- `POST /api/generate` (`frontend/app.py`) -> `core/bot_generator.py` spawns
+  `opencode run --auto --agent bot-writer` with the character, prompt, and
+  target file path.
+- The `bot-writer` agent (`.opencode/agents/bot-writer.md`) loads two skills
+  (`.opencode/skills/libmelee-bot-interface/` and `melee-strategy/`), writes
+  the bot, and iterates on `core/test_bot.py` until it passes.
+- The agent's `edit` permission is scoped to `generated/**` only; its `bash`
+  permission is scoped to the test harness command only.
+- Model: `opencode/deepseek-v4-flash-free`.
+
+### Test harness (`core/test_bot.py`)
+
+Standalone script that imports a bot file and runs `act()` against 12 mock
+gamestate scenarios (20 frames each) without Dolphin. Validates the return
+dict shape, stick ranges, and button keys. Used by the bot-writer agent to
+iterate. Can also be run manually:
+
+```bash
+.venv/bin/python core/test_bot.py <path_to_bot.py>
+```
+
+Bots live at fixed paths in `core/bots/` (one per character) and are
+hot-reloaded by `core/bot_loader.py` using `importlib` whenever the file's
+mtime changes - no restart required. Generated bots in `generated/` are
+also hot-reloaded the same way.
 
 ---
 
@@ -360,18 +401,23 @@ would be missing). `main.py` injects the `MeleeOrchestrator` instance into
 Routes (`frontend/app.py`):
 - `GET /lobby` — pick 4 players/characters and start a match (`/` redirects here)
 - `GET /watch` — Twitch stream embed + live scores
-- `POST /api/start` — queue a match; body: `{"players": [{port, name, character} × 4]}`
+- `POST /api/start` — queue a match; body: `{"players": [{port, name, character, code?, prompt?} × 4]}`
 - `POST /api/stop` — reset app state
+- `POST /api/generate` — generate a bot from a prompt via opencode agent; body: `{"port": 1, "character": "FOX", "prompt": "..."}`
 - `GET /api/state` — phase, scores, winner
+- `GET /api/last-form` — return last submitted lobby form (names, characters, code, prompt)
 - `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action)
 
 Characters map to fixed bot files in `core/bots/` (fox.py, marth.py,
 falcon.py, falco.py), hot-reloaded by `core/bot_loader.py` on mtime change.
+Generated bots in `generated/` are resolved per-port via
+`generated/latest.json`.
 
 ---
 
 ## What Is Not Yet Done
 
 - [x] ~~Public tunnel~~ — WireGuard tunnel + nginx (Ansible) live; frp retired
-- [ ] Ollama / Llama3 not installed (LLM decisions will always fall back to None)
-- [ ] No test suite
+- [x] ~~Prompt-to-bot generation~~ — opencode `bot-writer` agent + skills + test harness live
+- [ ] Ollama / Llama3 not installed (LLM in-game decisions always fall back to None; prompt-to-bot uses opencode instead)
+- [ ] No test suite for the core orchestrator/frontend (bot test harness exists at `core/test_bot.py`)

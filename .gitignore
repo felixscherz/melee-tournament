@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 .DS_Store
 uploads/
+generated/
 assets/
 *.iso
 *.gcm

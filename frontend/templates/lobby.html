@@ -89,6 +89,35 @@
     .code-status.ok  { color: #81c784; }
     .code-status.err { color: #e94560; }
 
+    details.bot-prompt > summary {
+      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
+      list-style: none; user-select: none; padding: 0.2rem 0;
+    }
+    details.bot-prompt > summary::before { content: '▸ '; }
+    details.bot-prompt[open] > summary::before { content: '▾ '; }
+    details.bot-prompt textarea {
+      min-height: 60px; font-size: 0.8rem; font-family: inherit; line-height: 1.4;
+      white-space: pre-wrap; overflow-wrap: break-word;
+    }
+    .gen-btn {
+      padding: 0.4rem 1rem; background: #2a5a2a; color: #cfe8cf; border: none;
+      border-radius: 4px; font-family: inherit; font-size: 0.72rem; cursor: pointer;
+      letter-spacing: 1px; margin-top: 0.4rem; transition: background 0.2s;
+    }
+    .gen-btn:hover { background: #3a7a3a; }
+    .gen-btn:disabled { background: #333; color: #666; cursor: wait; }
+    .gen-status { font-size: 0.68rem; margin-top: 0.3rem; min-height: 0.9rem; }
+    .gen-status.ok  { color: #81c784; }
+    .gen-status.err { color: #e94560; }
+    .gen-status.info { color: #6060a0; }
+    .spinner {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid #333; border-top-color: #e94560; border-radius: 50%;
+      animation: spin 0.8s linear infinite; vertical-align: middle;
+      margin-right: 0.3rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     .instructions {
       margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #2a2a4a;
     }
@@ -172,6 +201,14 @@
           oninput="clearCodeStatus({{ i }})"></textarea>
         <div class="code-status" id="code-status-{{ i }}"></div>
       </details>
+      <details class="bot-prompt">
+        <summary>GENERATE BOT FROM PROMPT (optional)</summary>
+        <textarea id="prompt-{{ i }}" spellcheck="true"
+          placeholder="Describe how this bot should play, e.g. 'aggressive fox that shines and up-smashes, recovers with firefox when off-stage'"
+          oninput="clearGenStatus({{ i }})"></textarea>
+        <button class="gen-btn" id="gen-btn-{{ i }}" onclick="generateBot({{ i }})">GENERATE</button>
+        <div class="gen-status" id="gen-status-{{ i }}"></div>
+      </details>
     </div>
     {% endfor %}
   </div>
@@ -193,11 +230,15 @@
   <section class="instructions">
     <h3>HOW TO WRITE A BOT</h3>
     <p>
-      Leave the code box blank to use the built-in AI for that character. To take
-      control, paste a Python snippet defining a <code>Bot</code> class with an
-      <code>act</code> method. It's called once per frame (~60fps) and returns the
-      controller inputs for that frame — or <code>None</code> to release everything.
+      There are three ways to control a player:
     </p>
+    <ul>
+      <li><strong>Default AI</strong> — leave everything blank. A built-in bot plays the character.</li>
+      <li><strong>Custom code</strong> — paste a Python <code>Bot</code> class into the code box.</li>
+      <li><strong>Generate from prompt</strong> — describe how the bot should play in the prompt box and click GENERATE. An AI agent writes and tests the code for you. This takes 30s-5min.</li>
+    </ul>
+    <p>
+      If both custom code and a generated bot exist, the custom code takes priority.
     <p>Your <code>act(gamestate, player_port)</code> must return a dict shaped like:</p>
     <pre>{
   "stick_x": 0.5,   # 0.0 = left, 1.0 = right, 0.5 = neutral
@@ -271,6 +312,54 @@ for (let i = 1; i <= 4; i++) updateInfo(i);
 function clearCodeStatus(port) {
   const el = document.getElementById(`code-status-${port}`);
   el.textContent = ""; el.className = "code-status";
+}
+
+function clearGenStatus(port) {
+  const el = document.getElementById(`gen-status-${port}`);
+  el.textContent = ""; el.className = "gen-status";
+}
+
+async function generateBot(port) {
+  const btn = document.getElementById(`gen-btn-${port}`);
+  const status = document.getElementById(`gen-status-${port}`);
+  const promptEl = document.getElementById(`prompt-${port}`);
+  const charEl = document.getElementById(`char-${port}`);
+  const prompt = promptEl.value.trim();
+
+  if (!prompt) {
+    status.textContent = "Enter a prompt first.";
+    status.className = "gen-status err";
+    return;
+  }
+
+  btn.disabled = true;
+  status.innerHTML = '<span class="spinner"></span>Generating bot... (this can take a minute)';
+  status.className = "gen-status info";
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        port: port,
+        character: charEl.value,
+        prompt: prompt,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.textContent = `Generated bot ready (version ${data.version_id})`;
+      status.className = "gen-status ok";
+    } else {
+      status.textContent = data.error || "Generation failed";
+      status.className = "gen-status err";
+    }
+  } catch (e) {
+    status.textContent = "Request failed: " + e.message;
+    status.className = "gen-status err";
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---- Example bot snippets shown in the guide ----
@@ -403,7 +492,7 @@ async function checkPhase() {
 checkPhase();
 
 // Repopulate the form with whatever was submitted for the last match, so
-// coming back to the lobby after a game doesn't wipe names/characters/bot code.
+// coming back to the lobby after a game doesn't wipe names/characters/bot code/prompt.
 async function restoreForm() {
   try {
     const { players } = await fetch('/api/last-form').then(r => r.json());
@@ -412,13 +501,23 @@ async function restoreForm() {
       const name = document.getElementById(`name-${p.port}`);
       const char = document.getElementById(`char-${p.port}`);
       const code = document.getElementById(`code-${p.port}`);
+      const prompt = document.getElementById(`prompt-${p.port}`);
+      const genStatus = document.getElementById(`gen-status-${p.port}`);
       if (name && p.name) name.value = p.name;
       if (char && p.character) char.value = p.character;
       if (code && p.code) {
         code.value = p.code;
-        // Reveal the collapsed <details> so restored code is visible, not lost.
         const details = code.closest('details');
         if (details) details.open = true;
+      }
+      if (prompt && p.prompt) {
+        prompt.value = p.prompt;
+        const details = prompt.closest('details');
+        if (details) details.open = true;
+      }
+      if (genStatus && p.generated_version) {
+        genStatus.textContent = `Generated bot ready (version ${p.generated_version})`;
+        genStatus.className = "gen-status ok";
       }
       if (typeof updateInfo === 'function') updateInfo(p.port);
     }
@@ -444,6 +543,7 @@ async function startGame() {
     name: document.getElementById(`name-${i}`).value.trim() || `Player ${i}`,
     character: document.getElementById(`char-${i}`).value,
     code: document.getElementById(`code-${i}`).value,
+    prompt: document.getElementById(`prompt-${i}`).value,
   }));
 
   status.textContent = "Starting match...";

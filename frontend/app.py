@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
 
+from core.bot_generator import GenerateError, generate_bot, get_generated_path
 from core.bot_validator import BotValidationError, validate_bot_code
 from core.game_state import Phase, PlayerConfig, app_state
 from core.roster import SELECTABLE_CHARACTERS, is_valid_character
@@ -37,9 +38,13 @@ app.mount(
 # Injected by main.py
 _orchestrator = None
 
-# Remembers the last submitted lobby form (names, characters, custom code) so
-# the lobby can repopulate it after a match ends and nobody loses what they
-# typed. Survives match resets; only overwritten by the next /api/start.
+# Per-port locks so only one generation runs at a time per port.
+_gen_locks: dict[int, asyncio.Lock] = {}
+
+# Remembers the last submitted lobby form (names, characters, custom code,
+# prompt) so the lobby can repopulate it after a match ends and nobody loses
+# what they typed. Survives match resets; only overwritten by the next
+# /api/start.
 _last_form: list[dict] | None = None
 
 SUPPORTED_CHARACTERS = SELECTABLE_CHARACTERS
@@ -139,24 +144,69 @@ async def validate_code(body: dict):
     return {"ok": True}
 
 
-def _resolve_bot_path(port: int, character: str, code: str | None) -> Path:
-    """Return the bot file for a player, writing/validating custom code first.
+@app.post("/api/generate")
+async def generate_bot_endpoint(body: dict):
+    """Generate a bot from a natural-language prompt via the opencode agent.
 
-    If `code` is provided it is validated and persisted to uploads/player{port}.py
-    (hot-reloaded by BotLoader). Otherwise the character's default bot is used.
+    Request: {"port": 1, "character": "FOX", "prompt": "aggressive fox..."}
+    Returns: {"ok": true, "path": "...", "version_id": "..."} on success.
+    """
+    port = int(body.get("port", 0))
+    if port not in (1, 2, 3, 4):
+        raise HTTPException(status_code=400, detail="port must be 1-4")
+
+    character = body.get("character", "").upper()
+    if not is_valid_character(character):
+        raise HTTPException(status_code=400, detail=f"Unknown character: {character}")
+
+    prompt = (body.get("prompt", "") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    # Per-port lock: only one generation at a time per port
+    lock = _gen_locks.setdefault(port, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(
+            status_code=409, detail="Generation already running for this port"
+        )
+
+    async with lock:
+        try:
+            result = await generate_bot(port, character, prompt)
+            return result
+        except GenerateError as exc:
+            return {"ok": False, "error": str(exc)}
+
+
+def _resolve_bot_path(port: int, character: str, code: str | None) -> Path:
+    """Return the bot file for a player.
+
+    Priority:
+      1. Pasted code (validated, written to uploads/player{port}.py)
+      2. Generated bot from generated/latest.json (if one exists for this port)
+      3. Character's default bot from core/bots/
+
     Raises HTTPException(400) if custom code fails validation.
     """
-    if not code or not code.strip():
-        return _default_bot_path(character)
-    try:
-        validate_bot_code(code)
-    except BotValidationError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Player {port} code rejected: {exc}"
-        )
-    dest = UPLOAD_DIR / f"player{port}.py"
-    dest.write_text(code, encoding="utf-8")
-    return dest
+    # 1. Explicit pasted code wins
+    if code and code.strip():
+        try:
+            validate_bot_code(code)
+        except BotValidationError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Player {port} code rejected: {exc}"
+            )
+        dest = UPLOAD_DIR / f"player{port}.py"
+        dest.write_text(code, encoding="utf-8")
+        return dest
+
+    # 2. Generated bot (from prompt via opencode agent)
+    generated = get_generated_path(port)
+    if generated is not None:
+        return generated
+
+    # 3. Default bot
+    return _default_bot_path(character)
 
 
 @app.post("/api/start")
@@ -193,6 +243,7 @@ async def start_game(body: StartRequest):
             "name": p.get("name", ""),
             "character": p.get("character", "").upper(),
             "code": p.get("code", "") or "",
+            "prompt": p.get("prompt", "") or "",
         }
         for p in body.players
     ]
@@ -221,8 +272,26 @@ async def get_state():
 @app.get("/api/last-form")
 async def get_last_form():
     """Return the last submitted lobby form so the UI can repopulate it and
-    nobody loses the names/characters/bot code they entered for a prior match."""
-    return {"players": _last_form or []}
+    nobody loses the names/characters/bot code/prompt they entered for a prior
+    match. Also includes generated bot info so the UI can restore the
+    "Generated bot ready" status."""
+    from core.bot_generator import read_latest
+
+    latest = read_latest()
+    players = []
+    for p in _last_form or []:
+        entry = {
+            "port": p["port"],
+            "name": p.get("name", ""),
+            "character": p.get("character", ""),
+            "code": p.get("code", ""),
+            "prompt": p.get("prompt", ""),
+        }
+        gen = latest.get(str(p["port"]))
+        if gen:
+            entry["generated_version"] = gen.get("version_id", "")
+        players.append(entry)
+    return {"players": players}
 
 
 # ------------------------------------------------------------------ #
