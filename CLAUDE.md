@@ -33,16 +33,22 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
                    │                     │
              [WebSocket]           [REST API]
 
-[OBS Studio] ──RTMP──► [OvenMediaEngine (Docker)]
+[OBS Studio] ──RTMP──► [OvenMediaEngine (Podman, loopback-published)]
                               │
-                         [WebRTC / OvenPlayer in browser]
+                    [stream_forwarder.py]  (0.0.0.0 → 127.0.0.1 shim; gvproxy can't
+                              │              serve the VPN interface — see below)
                               │
-                       [frpc on Mac] ──tunnel──► [frps on Hetzner VM]
-                                                        │
-                                              [nginx TLS termination]
-                                              smash.felixscherz.me    → FastAPI
-                                              stream-smash.felixscherz.me → OME WebRTC
+                    [WireGuard wg0]  Mac 10.0.0.20 ↔ 10.0.0.1 Hetzner VM
+                              │        (on-demand: ./stream-vpn.sh up/down)
+                              │
+                      [nginx TLS termination on VM]
+                      smash.felixscherz.me        → 10.0.0.20:8080  (FastAPI)
+                      stream-smash.felixscherz.me → 10.0.0.20:3355  (OME signaling)
+                      UDP 10000-10004 ─DNAT+MASQ─► 10.0.0.20        (OME media)
 ```
+
+Full migration rationale + the two critical networking details (NAT symmetry,
+the forwarder shim) are in `VPN-MIGRATION.md`. Steady-state ops in `DEPLOYMENT.md`.
 
 ---
 
@@ -54,10 +60,10 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
 | Rosetta 2 | System | Already installed |
 | Melee ISO | `assets/melee.iso` | NTSC v1.02 (GALE01 r2) |
 | Python venv | `.venv/` | Python 3.13, activate before running anything |
-| OvenMediaEngine | Docker container `ome` | Ports 1935/TCP, 3333/TCP, 3478/TCP, 10000-10009/UDP |
+| OvenMediaEngine | Podman container `ome` | RTMP 1935; WebRTC 3355 (signaling) + 10000-10009/UDP (media) published on `127.0.0.1` |
 | OBS Studio | `/Applications/OBS.app` | Configured for 60fps, 6000 Kbps, no B-frames |
-| frpc | `$(brew --prefix)/bin/frpc` | v0.69.1, frp client for Mac |
-| Docker | System | v29.5, daemon already running |
+| wireguard-tools | `$(brew --prefix)/bin/wg` | `wg`/`wg-quick`; tunnel config `config/wireguard/wg0-smash.conf` (gitignored) |
+| Podman | System | docker-compatible CLI; uses gvproxy for port forwarding (does not serve the VPN interface) |
 
 ---
 
@@ -298,12 +304,13 @@ frontend = "smash.felixscherz.me"
 stream   = "stream-smash.felixscherz.me"
 
 [streaming]
-mode          = "local"        # "local" = ws://localhost:3333, "production" = wss://stream domain
-webrtc_signal = "ws://localhost:3333/app/stream"
+mode          = "local"        # "local" = ws://localhost:3355, "production" = wss://stream domain
+webrtc_signal = "ws://localhost:3355/app/stream"
 ```
 
-Switch to `mode = "production"` when the frp tunnel + nginx are active.
-The FastAPI server derives the OvenPlayer URL from this at startup.
+Switch to `mode = "production"` when the WireGuard tunnel + nginx are active
+(`./stream-vpn.sh up`). The FastAPI server derives the OvenPlayer URL from this
+at startup.
 
 ---
 
@@ -326,29 +333,32 @@ The full `docker run` invocation (for reference):
 ```bash
 docker run -d --name ome \
   -p 1935:1935 \
-  -p 3333:3333 \
-  -p 3478:3478 \
-  -p 10000-10009:10000-10009/udp \
+  -p 127.0.0.1:3355:3333 \
+  -p 127.0.0.1:10000-10009:10000-10009/udp \
   -e OME_HOST_IP=127.0.0.1 \
   -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
   airensoft/ovenmediaengine:latest
 ```
 
+(`start-ome.sh` sets `OME_HOST_IP` to the public IP `78.46.220.137` in
+`mode = "production"` so ICE candidates advertise a reachable address.)
+
 **Why these flags matter:**
 
 | Flag | Reason |
 |---|---|
-| `-e OME_HOST_IP=127.0.0.1` | Without this, OME advertises its Docker-internal IP in ICE candidates. The browser can't reach that IP on macOS — WebRTC fails with error 5111. |
-| `-p 3478:3478` | TCP relay port. Required because OME default config has `TcpForce=true`. Missing this port = ICE timeout. |
-| `config/ome-Server.xml` | Sets `TcpForce=false` so WebRTC uses direct UDP (lower latency). Must be applied after container creation. |
+| `-e OME_HOST_IP=…` | Without this, OME advertises its container-internal IP in ICE candidates, unreachable from the browser (WebRTC error 5111). Local = `127.0.0.1`; production = the public IP. |
+| `-p 127.0.0.1:3355:3333` | Signaling on host port `3355` (sidesteps the Obsidian `3333` collision), bound to **loopback** so `stream_forwarder.py` can own the VPN IP without a bind conflict. |
+| `-p 127.0.0.1:10000-10009:…/udp` | WebRTC media, loopback-bound for the same reason. Production traffic arrives via the forwarder shim, not directly (gvproxy can't serve the VPN). |
+| `config/ome-Server.xml` | Sets `TcpForce=false` so WebRTC uses direct UDP (lower latency, no TCP relay). |
 
 **Stream URLs:**
 - OBS → OME RTMP ingest: `rtmp://localhost:1935/app/stream`
-- OvenPlayer (local): `ws://localhost:3333/app/stream`
+- OvenPlayer (local): `ws://localhost:3355/app/stream`
 - OvenPlayer (production, via tunnel): `wss://stream-smash.felixscherz.me/app/stream`
 
-The SSL cert error in `docker logs ome` is harmless locally — port 3333 runs
-plain WS without TLS.
+The SSL cert error in `docker logs ome` is harmless locally — port 3355 runs
+plain WS without TLS (nginx on the VM terminates TLS for production).
 
 ---
 
@@ -384,7 +394,7 @@ Use this config in the dashboard or any test page for lowest latency:
 
 ```js
 OvenPlayer.create('player_id', {
-  sources: [{ label: 'WebRTC', type: 'webrtc', file: 'ws://localhost:3333/app/stream' }],
+  sources: [{ label: 'WebRTC', type: 'webrtc', file: 'ws://localhost:3355/app/stream' }],
   autoStart: true,
   mute: false,
   webrtcConfig: {
@@ -397,28 +407,62 @@ OvenPlayer.create('player_id', {
 
 ---
 
-## frp Tunnel (public internet exposure)
+## WireGuard Tunnel (public internet exposure)
 
-`frpc` is installed locally. Config at `config/frpc.toml`.
+Production streaming runs over a **WireGuard** tunnel to the Hetzner VM (replaced
+the old frp tunnel). The Mac joins the `10.0.0.0/24` VPN **on-demand**, only while
+streaming. Full setup + rationale in `VPN-MIGRATION.md`; steady-state ops in
+`DEPLOYMENT.md`.
 
-Before using, set:
-- `serverAddr` = Hetzner VM public IP
-- `auth.token` = shared secret (must match `frps.toml` on the VM)
-
-Run on Mac:
 ```bash
-frpc -c config/frpc.toml
+./stream-vpn.sh up       # join VPN + start the OME forwarder shim
+./stream-vpn.sh status   # handshake + forwarder health
+./stream-vpn.sh down     # leave VPN + stop forwarders
 ```
 
-The VM needs `frps` installed and `config/frps.toml` copied to it.
-Deploy script: `./config/deploy-nginx.sh user@hetzner-ip`
+- Mac tunnel config: `config/wireguard/wg0-smash.conf` (gitignored; private key
+  stays on the Mac). Mac = `10.0.0.20`, VM = `10.0.0.1`.
+- VM side (WG server peer + media DNAT/MASQ, nginx upstreams, TLS) is
+  **Ansible-managed in the `home` repo** — deploy tags `vpn` and `proxy`.
+- Public routing: `smash` → `10.0.0.20:8080` (FastAPI); `stream-smash` →
+  `10.0.0.20:3355` (OME signaling, via the shim); UDP `10000-10004` DNAT+MASQ →
+  `10.0.0.20` (OME media, via the shim).
 
-Ports tunnelled:
-- 80 → FastAPI (8080)
-- 3333 TCP → OME WebRTC signaling
-- 10000-10009 UDP → OME WebRTC media (must also be open in Hetzner firewall)
+**The forwarder shim (`stream_forwarder.py`) is mandatory:** Podman/Docker's
+gvproxy does not serve the WireGuard interface, so the VM cannot reach OME's
+loopback-published ports directly. The shim binds `0.0.0.0` (which *does* receive
+tunnel traffic) and relays to `127.0.0.1`. `stream-vpn.sh` starts/stops it with
+the tunnel. (Note: `socat` does **not** work here — its listening socket doesn't
+receive utun traffic on macOS; a plain Python socket does. Don't "simplify" it
+back to socat.)
 
 ---
+
+## Scaling to many viewers — Twitch relay
+
+The WebRTC path fans out **per viewer from the Mac**, so it's capped by the Mac's
+home upload bandwidth (~N × bitrate). Fine for a handful of viewers; ~30 viewers
+× 6 Mbps ≈ 180 Mbps is far beyond a home uplink. For a crowd, relay to Twitch's
+CDN — OME pushes **one** copy and Twitch fans out:
+
+```bash
+echo "<twitch-stream-key>" > config/twitch.key   # gitignored
+./twitch-push.sh start    # relay app/stream -> Twitch (bypass_video H264 + aac_audio)
+./twitch-push.sh status
+./twitch-push.sh stop
+```
+
+Mechanics: OME's REST API (`127.0.0.1:8081`, enabled in `ome-Server.xml`
+`<Managers>`, token `OME_API_TOKEN`, default `smash-ome-api`) drives
+push-publishing via `POST .../apps/app:startPush`. The push uses the `bypass_stream`
+profile's H264 passthrough + AAC (no re-encode) — exactly what Twitch wants.
+
+**The `app` application must have `<Push />` in its `<Publishers>`** (it's enabled
+in `ome-Server.xml`). Without it, OME logs "Push publisher is disabled" at startup
+and `startPush` fails with a misleading `Could not find application` 404. Same
+applies to `<File />` if you ever want the record API. The
+low-latency WebRTC path keeps working alongside it: WebRTC for small groups,
+Twitch for crowds (Twitch latency ~2-5s vs sub-second WebRTC).
 
 ## Web Dashboard
 
@@ -441,7 +485,6 @@ falcon.py, falco.py), hot-reloaded by `core/bot_loader.py` on mtime change.
 
 ## What Is Not Yet Done
 
-- [ ] frp tunnel not configured (needs Hetzner IP + auth token)
-- [ ] nginx configs not deployed to Hetzner VM
+- [x] ~~Public tunnel~~ — WireGuard tunnel + nginx (Ansible) live; frp retired
 - [ ] Ollama / Llama3 not installed (LLM decisions will always fall back to None)
 - [ ] No test suite

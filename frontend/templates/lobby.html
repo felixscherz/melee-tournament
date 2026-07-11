@@ -379,7 +379,7 @@ async function copyExample() {
 async function checkStream() {
   const el = document.getElementById('obs-check');
   try {
-    const ws = new WebSocket('ws://localhost:3333/app/stream');
+    const ws = new WebSocket('ws://localhost:3355/app/stream');
     ws.onopen = () => {
       el.textContent = '✓ OBS stream detected — ready to go';
       el.style.color = '#81c784';

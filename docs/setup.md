@@ -30,18 +30,24 @@ Verify: `curl http://localhost:11434/api/tags`
 
 ## 4. OvenMediaEngine via Docker
 
+Prefer `./start-ome.sh` — it picks `OME_HOST_IP` from the streaming mode and
+publishes the WebRTC ports on loopback (for the forwarder shim). The equivalent
+`docker run` is:
+
 ```bash
 docker run -d --name ome \
   -p 1935:1935 \
-  -p 3333:3333 \
-  -p 3478:3478 \
-  -p 10000-10009:10000-10009/udp \
+  -p 127.0.0.1:3355:3333 \
+  -p 127.0.0.1:10000-10009:10000-10009/udp \
   -e OME_HOST_IP=127.0.0.1 \
   -v "$(pwd)/config/ome-Server.xml:/opt/ovenmediaengine/bin/origin_conf/Server.xml:ro" \
   airensoft/ovenmediaengine:latest
 ```
 
-Verify the ingest is ready: `docker logs ome | grep Listening`
+WebRTC signaling (`3355`) and media (`10000-10009/udp`) bind loopback because
+production traffic reaches OME via `stream_forwarder.py` over the VPN, not
+directly (Podman/Docker gvproxy can't serve the WireGuard interface — see
+`VPN-MIGRATION.md`). Verify the ingest is ready: `docker logs ome | grep Listening`
 
 ## 5. OBS Studio → OvenMediaEngine
 
@@ -50,19 +56,22 @@ Verify the ingest is ready: `docker logs ome | grep Listening`
 3. Add Window Capture source, select Dolphin window.
 4. Start Streaming.
 
-## 6. Hetzner VM Setup
+## 6. Hetzner VM Setup (WireGuard)
+
+The VM's WireGuard server, nginx, and TLS are provisioned from the `home` Ansible
+repo (not this repo). See `DEPLOYMENT.md` for the tags (`vpn`, `proxy`) and the
+Mac-side WireGuard setup. On the Mac:
 
 ```bash
-# On your Hetzner VM (Ubuntu 22.04 recommended)
-apt update && apt install -y frp
-scp config/frps.toml user@YOUR_HETZNER_IP:/root/frps.toml
+brew install wireguard-tools
+./stream-vpn.sh up      # joins the VPN + starts the OME forwarder shim
+./stream-vpn.sh down    # leaves the VPN when done streaming
+```
 
-# Open firewall ports (Hetzner Cloud console → Firewall rules):
-# TCP: 7000, 80, 3333, 1935
-# UDP: 10000-10009
-
-# Start frps
-frps -c /root/frps.toml &
+Open firewall ports (Hetzner Cloud console → Firewall rules):
+```
+# TCP: 22, 80, 443
+# UDP: 51820 (WireGuard), 10000-10004 (WebRTC media)
 ```
 
 ## 7. Troubleshooting
@@ -72,5 +81,6 @@ frps -c /root/frps.toml &
 | `Failed to connect to Dolphin` | Ensure Slippi Dolphin is open and the ISO is running. Check port 51441 is free. |
 | OvenPlayer shows no stream | Confirm OBS is streaming and OME container is running. Check WebRTC URL in settings.toml. |
 | Bot file rejected | Must have a `Bot` class with an `act(gamestate, port)` method. Check server logs. |
-| frp tunnel not connecting | Confirm `auth.token` matches in both frpc.toml and frps.toml. Check VM firewall port 7000. |
+| VPN won't connect | `./stream-vpn.sh status` — check for a recent handshake; confirm the VM knows the Mac peer (Ansible `vpn` tag) and Hetzner firewall UDP 51820. |
+| Stream connects but no video / ICE fails | Confirm the forwarder shim is alive (`./stream-vpn.sh status`) and OME publishes `3355`/`10000-10004` on loopback. In `chrome://webrtc-internals` the pair should be a UDP `host` pair, not `relay`. |
 | LLM too slow / timing out | Use a smaller Ollama model (`ollama pull llama3:8b-instruct-q4_0`) or reduce prompt complexity. |

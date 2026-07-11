@@ -28,6 +28,10 @@ else
 fi
 echo "Streaming mode: ${STREAM_MODE:-local} — OME_HOST_IP=$OME_HOST_IP"
 
+# Token for OME's REST API (push publishing / Twitch relay). Loopback-only, so
+# low risk; override by exporting OME_API_TOKEN. Must match twitch-push.sh.
+OME_API_TOKEN="${OME_API_TOKEN:-smash-ome-api}"
+
 needs_recreate=false
 
 if docker inspect ome &>/dev/null; then
@@ -50,14 +54,30 @@ else
   needs_recreate=true
 fi
 
+# OME must bind its loopback ports before the forwarder shim binds the 0.0.0.0
+# wildcard, or 'docker run' fails with "address already in use" on 10000-10004.
+# If the shim is up, stop it here; ./stream-vpn.sh up restarts it afterwards.
+if pgrep -f stream_forwarder.py >/dev/null 2>&1; then
+  echo "⚠ Stopping the OME forwarder shim to free 10000-10004 for the container."
+  echo "  Re-run './stream-vpn.sh up' after this to restart the forwarders."
+  pkill -f stream_forwarder.py 2>/dev/null || true
+  sleep 1
+fi
+
 if [ "$needs_recreate" = true ]; then
   echo "Creating container 'ome'."
+  # WebRTC signaling (3355) and media (10000-10009/udp) are bound to loopback:
+  # the Podman/Docker gvproxy port-forwarder does NOT serve the WireGuard utun
+  # interface, so production traffic reaches OME via the native forwarder shim in
+  # stream-vpn.sh (10.0.0.20 -> 127.0.0.1). Local mode hits these on loopback
+  # directly. RTMP 1935 stays on all interfaces (OBS ingests over localhost).
   docker run -d --name ome \
     -p 1935:1935 \
-    -p 3333:3333 \
-    -p 3478:3478 \
-    -p 10000-10009:10000-10009/udp \
+    -p 127.0.0.1:3355:3333 \
+    -p 127.0.0.1:8081:8081 \
+    -p 127.0.0.1:10000-10009:10000-10009/udp \
     -e OME_HOST_IP="$OME_HOST_IP" \
+    -e OME_API_TOKEN="$OME_API_TOKEN" \
     -v "$CONFIG:$MOUNT_TARGET:ro" \
     airensoft/ovenmediaengine:latest
 else

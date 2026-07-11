@@ -7,3 +7,9 @@ uploads/
 assets/
 *.iso
 *.gcm
+
+# WireGuard tunnel config (contains the Mac private key)
+config/wireguard/
+
+# Twitch stream key (secret)
+config/twitch.key

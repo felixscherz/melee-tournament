@@ -87,8 +87,13 @@ async def admin(request: Request):
 async def watch(request: Request):
     if app_state.phase == Phase.IDLE:
         return RedirectResponse("/lobby")
+    twitch_channel = config["streaming"].get("twitch_channel", "").strip()
+    # Twitch's embed requires the exact host(s) serving the page in `parent`.
+    twitch_parents = [config["domains"]["frontend"], "localhost", "127.0.0.1"]
     return templates.TemplateResponse(request, "watch.html", {
         "webrtc_url": _webrtc_url(),
+        "twitch_channel": twitch_channel,
+        "twitch_parents": twitch_parents,
         "players": [
             {"port": p.port, "name": p.name, "character": SUPPORTED_CHARACTERS.get(p.character, p.character)}
             for p in app_state.players

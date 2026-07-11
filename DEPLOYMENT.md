@@ -1,153 +1,125 @@
-# Deployment — frp Tunnel + Hetzner Proxy
+# Deployment — WireGuard Tunnel + Hetzner Proxy
 
-Exposes the local Smash Tournament stack to the internet via an frp tunnel
-to a Hetzner VM with nginx TLS termination.
+Exposes the local Smash Tournament stack to the internet over a **WireGuard**
+tunnel to a Hetzner VM with nginx TLS termination. WebRTC media flows as native
+UDP (no TCP relay). This replaced the earlier frp tunnel; the one-time migration
+write-up and rationale live in `VPN-MIGRATION.md`.
 
-**Public URLs when live:**
+**Public URLs when live (tunnel up):**
 - `https://smash.felixscherz.me` → FastAPI (lobby, watch, API)
 - `wss://stream-smash.felixscherz.me` → OvenMediaEngine WebRTC signaling
 
+The stream is **on-demand**: the Mac joins the VPN only while streaming, so the
+public site serves only while `./stream-vpn.sh up` is active (502 otherwise).
+
 ---
 
-## Step 1 — Hetzner VM prerequisites
+## Architecture
 
-SSH into the VM and install dependencies:
+```
+                       public internet
+ browser ─WSS 443─►  nginx (VM) ──► 10.0.0.20:3355          (OME signaling)
+ browser ─HTTPS──►  nginx (VM) ──► 10.0.0.20:8080          (FastAPI)
+ browser ─UDP 10000-10004─► VM eth0 ─DNAT+MASQ─► 10.0.0.20:10000-10004 (OME media)
+                                     │
+                          WireGuard wg0  10.0.0.1 ↔ 10.0.0.20
+                                     │
+                                  [ Mac ]  (tunnel + forwarders up only while streaming)
+```
+
+Two non-obvious details make this work — read them before changing anything:
+
+1. **NAT symmetry for media.** The VM does **DNAT *and* MASQUERADE** on UDP
+   `10000-10004` so OME's replies traverse the VM (not the Mac's own internet),
+   or ICE fails. See `VPN-MIGRATION.md` → "NAT symmetry for media".
+2. **The forwarder shim.** OME runs under Podman/Docker, whose gvproxy does
+   **not** serve the WireGuard interface. `stream_forwarder.py` (started by
+   `stream-vpn.sh`) bridges `10.0.0.20` → OME on `127.0.0.1`. OME therefore
+   publishes `3355` + `10000-10004` on loopback. See `VPN-MIGRATION.md` →
+   "gvproxy can't serve the VPN".
+
+---
+
+## VM side — managed by Ansible (the `home` repo)
+
+The Hetzner VM's WireGuard server, nginx, and TLS are provisioned from the
+`home` Ansible repo, **not** from this repo:
+
+| Concern | File in `home` | Deploy |
+|---|---|---|
+| WG server + Mac peer + media DNAT/MASQ | `templates/server_wg0.conf.j2` | `ansible-playbook main.yml --limit proxy --tags vpn -i inventory.yaml --ask-vault-pass` |
+| nginx upstreams (→ `10.0.0.20`) + TLS | `files/nginx.conf`, `main.yml` | `ansible-playbook main.yml --limit proxy --tags proxy -i inventory.yaml --ask-vault-pass` |
+
+Hetzner firewall must allow inbound **UDP 51820** (WireGuard) and **UDP
+10000-10004** (WebRTC media), plus TCP 22/80/443.
+
+---
+
+## Mac side — one-time WireGuard setup
+
+1. `brew install wireguard-tools`
+2. Generate the Mac keypair (private key never leaves the Mac; gitignored):
+   ```bash
+   mkdir -p config/wireguard && cd config/wireguard
+   wg genkey | tee mac.privkey | wg pubkey > mac.pubkey
+   chmod 600 mac.privkey
+   ```
+3. Add the Mac's public key (`mac.pubkey`) as a peer in the `home` repo's
+   `server_wg0.conf.j2` (`AllowedIPs = 10.0.0.20/32`) and deploy the `vpn` tag.
+4. Write `config/wireguard/wg0-smash.conf` (gitignored) — `[Interface]` with the
+   private key + `Address = 10.0.0.20/24`, MTU `1380`; `[Peer]` with the VM's
+   `wg0` public key, `Endpoint = home.felixscherz.me:51820`,
+   `AllowedIPs = 10.0.0.0/24` (subnet only — not `0.0.0.0/0`),
+   `PersistentKeepalive = 25`. Full template in `VPN-MIGRATION.md` (Phase 1).
+
+---
+
+## Running it (day-to-day)
 
 ```bash
-apt install nginx certbot python3-certbot-nginx
+./start-ome.sh              # start OvenMediaEngine FIRST (binds loopback ports)
+./stream-vpn.sh up          # THEN join VPN + start the forwarder shim
+source .venv/bin/activate && python main.py   # FastAPI + Dolphin
+# open OBS → Start Streaming
+# ... run matches ...
+./stream-vpn.sh down        # leave VPN + stop forwarders when done
 ```
 
-Install `frps` at the same version as the local `frpc` (v0.69.1):
+**Order matters:** start OME before the shim. OME binds `10000-10004` on
+loopback; the shim binds the same ports on `0.0.0.0`. If the shim is up first,
+`docker run` fails with "address already in use". `start-ome.sh` will stop a
+running shim to recreate the container — just re-run `./stream-vpn.sh up` after.
+
+Set `mode = "production"` in `config/settings.toml` so the watch page embeds
+`wss://stream-smash.felixscherz.me`.
+
+### Scaling to many viewers — relay to Twitch
+
+The WebRTC path fans out **per viewer from the Mac**, so it's capped by the
+Mac's home upload (~N × bitrate; ≈30 viewers × 6 Mbps ≈ 180 Mbps — too much).
+For a crowd, offload fan-out to Twitch's CDN — the Mac then uploads only one copy:
 
 ```bash
-curl -LO https://github.com/fatedier/frp/releases/download/v0.69.1/frp_0.69.1_linux_amd64.tar.gz
-tar xf frp_0.69.1_linux_amd64.tar.gz
-cp frp_0.69.1_linux_amd64/frps /usr/local/bin/
+echo "<your-twitch-stream-key>" > config/twitch.key   # gitignored
+./twitch-push.sh start      # OME relays app/stream to Twitch (H264+AAC passthrough)
+./twitch-push.sh status     # list active pushes
+./twitch-push.sh stop
 ```
+
+Requires OME running (API on `127.0.0.1:8081`) and OBS streaming into OME. The
+low-latency WebRTC path keeps working alongside the Twitch relay; use WebRTC for
+small groups and the Twitch link when many people watch. Twitch latency is
+~2-5s (low-latency mode) vs sub-second WebRTC.
+
+**Verify the path from another machine:** open
+`https://smash.felixscherz.me/lobby`, start a match, open the watch page, and in
+`chrome://webrtc-internals` confirm the selected candidate pair is a **UDP `host`
+pair on `78.46.220.137:1000x`** (not `relay`).
 
 ---
 
-## Step 2 — Hetzner firewall rules
+## Rollback
 
-Open these ports in the Hetzner Cloud Console (Firewall tab):
-
-| Protocol | Ports |
-|---|---|
-| TCP | 22, 80, 443, 7000, 3333, 1935 |
-| UDP | 10000–10009 |
-
----
-
-## Step 3 — DNS records
-
-Point both domains at the Hetzner VM's public IP:
-
-```
-smash.felixscherz.me        A  <hetzner-ip>
-stream-smash.felixscherz.me A  <hetzner-ip>
-```
-
----
-
-## Step 4 — Fill in the shared secret
-
-Choose a strong auth token and update two files:
-
-**`config/frpc.toml`** (on your Mac):
-```toml
-serverAddr = "<hetzner-ip>"
-auth.token = "<your-token>"
-```
-
-**`config/frps.toml`** (deployed to the VM):
-```toml
-auth.token = "<your-token>"
-```
-
-Both sides must use the same token or the tunnel won't connect.
-
----
-
-## Step 5 — Deploy frps to the VM
-
-```bash
-scp config/frps.toml user@<hetzner-ip>:/etc/frps.toml
-```
-
-Run frps on the VM:
-
-```bash
-frps -c /etc/frps.toml
-```
-
-To keep it running across reboots, create a systemd service:
-
-```bash
-cat > /etc/systemd/system/frps.service <<EOF
-[Unit]
-Description=frp server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/frps -c /etc/frps.toml
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable --now frps
-```
-
----
-
-## Step 6 — Deploy nginx + TLS
-
-DNS must be live before running this (certbot validates via HTTP).
-
-From your Mac:
-
-```bash
-./config/deploy-nginx.sh user@<hetzner-ip>
-```
-
-This copies `config/nginx-frontend.conf` and `config/nginx-stream.conf` to
-the VM, symlinks them into `sites-enabled`, and runs certbot to obtain
-Let's Encrypt certs for both domains.
-
----
-
-## Step 7 — Switch the app to production mode
-
-In `config/settings.toml`:
-
-```toml
-[streaming]
-mode = "production"
-```
-
-This makes the FastAPI server embed `wss://stream-smash.felixscherz.me`
-in the watch page instead of the local WS URL.
-
----
-
-## Step 8 — Start everything and test
-
-On your Mac:
-
-```bash
-# 1. Start OvenMediaEngine
-docker start ome
-
-# 2. Start the unified server
-source .venv/bin/activate
-python main.py
-
-# 3. Start the frp tunnel (separate terminal)
-frpc -c config/frpc.toml
-
-# 4. Start OBS streaming
-```
-
-Then open `https://smash.felixscherz.me/lobby` from another machine to verify
-the full path: lobby → start match → watch page → WebRTC stream.
+There is no frp fallback anymore. If the tunnel misbehaves, check in order:
+`./stream-vpn.sh status` (handshake + forwarder alive), `ping 10.0.0.1`, and on
+the VM `sudo iptables -t nat -S | grep 10.0.0.20` (DNAT+MASQ present).

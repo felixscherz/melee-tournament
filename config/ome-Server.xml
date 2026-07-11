@@ -36,15 +36,14 @@
 
 	<!-- Settings for the ports to bind -->
 	<Bind>
-		<!-- Enable this configuration if you want to use API Server -->
-		<!--
+		<!-- API server: enabled for push publishing (relay to Twitch). Published on
+		     127.0.0.1:8081 only (see start-ome.sh); token in the top-level <Managers>. -->
 		<Managers>
 			<API>
 				<Port>${env:OME_API_PORT:8081}</Port>
 				<WorkerCount>1</WorkerCount>
 			</API>
 		</Managers>
-		-->
 		<Providers>
 			<!-- Pull providers -->
 			<RTSPC>
@@ -79,7 +78,7 @@
 				<IceCandidates>
 					<IceCandidate>${env:OME_HOST_IP:*}:${env:OME_WEBRTC_CANDIDATE_PORT:10000-10004/udp}</IceCandidate>
 					<TcpRelay>${env:OME_HOST_IP:*}:${env:OME_WEBRTC_TCP_RELAY_PORT:3478}</TcpRelay>
-					<TcpForce>true</TcpForce>
+					<TcpForce>false</TcpForce>
 					<TcpRelayWorkerCount>1</TcpRelayWorkerCount>
 				</IceCandidates>
 			</WebRTC>
@@ -110,12 +109,25 @@
 				<IceCandidates>
 					<IceCandidate>${env:OME_HOST_IP:*}:${env:OME_WEBRTC_CANDIDATE_PORT:10000-10004/udp}</IceCandidate>
 					<TcpRelay>${env:OME_HOST_IP:*}:${env:OME_WEBRTC_TCP_RELAY_PORT:3478}</TcpRelay>
-					<TcpForce>true</TcpForce>
+					<TcpForce>false</TcpForce>
 					<TcpRelayWorkerCount>1</TcpRelayWorkerCount>
 				</IceCandidates>
 			</WebRTC>
 		</Publishers>
 	</Bind>
+
+	<!-- API access control for push publishing. Bound to loopback in start-ome.sh;
+	     the token is passed via OME_API_TOKEN (default below). -->
+	<Managers>
+		<Host>
+			<Names>
+				<Name>*</Name>
+			</Names>
+		</Host>
+		<API>
+			<AccessToken>${env:OME_API_TOKEN:smash-ome-api}</AccessToken>
+		</API>
+	</Managers>
 
 	<!-- Default Settings for all Virtual Hosts -->
 	<Defaults>
@@ -348,6 +360,8 @@
 						<AppWorkerCount>1</AppWorkerCount>
 						<StreamWorkerCount>8</StreamWorkerCount>
 						<OVT />
+						<!-- Push publisher: enables the startPush API (Twitch relay via twitch-push.sh) -->
+						<Push />
 						<WebRTC>
 							<Timeout>30000</Timeout>
 							<Rtx>false</Rtx>

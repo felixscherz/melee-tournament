@@ -18,7 +18,12 @@ stream   = "stream-smash.felixscherz.me"
 [streaming]
 # Local OBS → OvenMediaEngine RTMP ingest
 rtmp_ingest   = "rtmp://localhost:1935/app/stream"
-# Set to "local" to use ws://localhost:3333 (no TLS), or "production" to use the stream domain
+# Set to "local" to use ws://localhost:3355 (no TLS), or "production" to use the stream domain
 # mode          = "local"
 mode          = "production"
-webrtc_signal = "ws://localhost:3333/app/stream"
+webrtc_signal = "ws://localhost:3355/app/stream"
+# Twitch channel for the embedded player on /watch (the part after twitch.tv/).
+# When set, /watch defaults to the Twitch player (scales via CDN) with a toggle
+# to low-latency WebRTC. Leave empty to show WebRTC only. Start the relay with
+# ./twitch-push.sh start.
+twitch_channel = "v4in11111"
