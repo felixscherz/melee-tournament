@@ -40,6 +40,7 @@
     .source-toggle button:first-child { border-radius: 4px 0 0 4px; }
     .source-toggle button:last-child  { border-radius: 0 4px 4px 0; }
     .source-toggle button.active { background: #e94560; color: #fff; }
+    .source-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .scoreboard {
       display: grid;
@@ -104,7 +105,8 @@
     {% if twitch_channel %}
     <div class="source-toggle" id="source-toggle">
       <button type="button" data-src="twitch">TWITCH</button>
-      <button type="button" data-src="webrtc">LOW-LATENCY</button>
+      <button type="button" data-src="webrtc" disabled
+              title="Disabled for large audiences — local WebRTC only">LOW-LATENCY</button>
     </div>
     {% endif %}
     <nav>

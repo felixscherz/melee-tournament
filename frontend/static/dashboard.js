@@ -7,7 +7,8 @@ function setStatus(msg, cls = '') {
 
 // --- WebSocket game state feed ---
 function connectWS() {
-  const ws = new WebSocket(`ws://${location.host}/ws/gamestate`);
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws/gamestate`);
 
   ws.onopen = () => setStatus('Connected', 'ok');
   ws.onclose = () => {

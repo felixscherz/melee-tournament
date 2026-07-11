@@ -60,6 +60,20 @@ def _webrtc_url() -> str:
     return config["streaming"]["webrtc_signal"]
 
 
+def _twitch_context() -> dict:
+    """Twitch embed params shared by every page with a live player.
+
+    When `twitch_channel` is set, pages default to the Twitch embed (fans out
+    via Twitch's CDN, so it scales to a crowd) and expose a toggle back to the
+    direct WebRTC feed for low latency. Twitch's iframe requires the exact
+    host(s) serving the page in `parent`.
+    """
+    return {
+        "twitch_channel": config["streaming"].get("twitch_channel", "").strip(),
+        "twitch_parents": [config["domains"]["frontend"], "localhost", "127.0.0.1"],
+    }
+
+
 # ------------------------------------------------------------------ #
 #  Pages                                                               #
 # ------------------------------------------------------------------ #
@@ -75,6 +89,7 @@ async def lobby(request: Request):
         "characters": SUPPORTED_CHARACTERS,
         "phase": app_state.phase.value,
         "webrtc_url": _webrtc_url(),
+        **_twitch_context(),
     })
 
 
@@ -87,13 +102,9 @@ async def admin(request: Request):
 async def watch(request: Request):
     if app_state.phase == Phase.IDLE:
         return RedirectResponse("/lobby")
-    twitch_channel = config["streaming"].get("twitch_channel", "").strip()
-    # Twitch's embed requires the exact host(s) serving the page in `parent`.
-    twitch_parents = [config["domains"]["frontend"], "localhost", "127.0.0.1"]
     return templates.TemplateResponse(request, "watch.html", {
         "webrtc_url": _webrtc_url(),
-        "twitch_channel": twitch_channel,
-        "twitch_parents": twitch_parents,
+        **_twitch_context(),
         "players": [
             {"port": p.port, "name": p.name, "character": SUPPORTED_CHARACTERS.get(p.character, p.character)}
             for p in app_state.players
