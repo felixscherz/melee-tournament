@@ -137,17 +137,40 @@
     }
     .instructions .example-tabs button.active { background: #e94560; color: #fff; }
 
-    .start-row { margin-top: 1.5rem; display: flex; justify-content: center; }
+    .controls {
+      position: sticky; top: 0; z-index: 30;
+      background: #14142a; border-bottom: 1px solid #2a2a4a;
+      padding: 0.55rem 1.5rem;
+      display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
+    }
+    .port-chips { display: flex; gap: 0.4rem; }
+    .chip {
+      font-size: 0.68rem; padding: 0.22rem 0.55rem; border-radius: 12px;
+      border: 1px solid #2a2a4a; background: #11112a; color: #9090b0;
+      display: flex; align-items: center; gap: 0.35rem; letter-spacing: 1px;
+      white-space: nowrap;
+    }
+    .chip strong { font-size: 0.72rem; }
+    .chip.ready { color: #81c784; border-color: #2a5a2a; }
+    .chip.gen   { color: #ffe082; border-color: #5a5a2a; }
+    .chip .spinner { width: 8px; height: 8px; border-width: 1.5px; margin: 0; }
+    .ctl-spacer { margin-left: auto; }
+    #reset-btn {
+      display: none; padding: 0.4rem 1rem; background: #2a2a4a; color: #9090c0;
+      border: none; border-radius: 4px; font-family: inherit; font-size: 0.7rem;
+      cursor: pointer; letter-spacing: 1px;
+    }
+    #reset-btn:hover { background: #35355a; }
     button#start-btn {
-      padding: 0.75rem 3rem;
+      padding: 0.6rem 2.4rem;
       background: #e94560; color: #fff; border: none; border-radius: 6px;
-      font-family: inherit; font-size: 1rem; font-weight: bold; letter-spacing: 2px;
+      font-family: inherit; font-size: 0.9rem; font-weight: bold; letter-spacing: 2px;
       cursor: pointer; transition: background 0.2s;
     }
     button#start-btn:hover { background: #c73352; }
     button#start-btn:disabled { background: #444; cursor: not-allowed; }
 
-    #status { text-align: center; margin-top: 1rem; font-size: 0.8rem; color: #6060a0; min-height: 1.2rem; }
+    #status { font-size: 0.78rem; color: #6060a0; min-height: 1.1rem; flex: 1 1 100%; }
     #status.ok  { color: #81c784; }
     #status.err { color: #e94560; }
 
@@ -163,6 +186,14 @@
     <a href="/admin">ADMIN</a>
   </nav>
 </header>
+
+<div class="controls" id="controls">
+  <div class="port-chips" id="port-chips"></div>
+  <div class="ctl-spacer"></div>
+  <button id="reset-btn" onclick="resetGame()">FORCE RESET</button>
+  <button id="start-btn" onclick="startGame()">START MATCH</button>
+  <div id="status"></div>
+</div>
 
 <div class="stream-wrap">
   <div class="stream-head">
@@ -213,19 +244,9 @@
     {% endfor %}
   </div>
 
-  <div class="start-row" style="flex-direction:column; align-items:center; gap:0.75rem;">
-    <div id="obs-check" style="font-size:0.75rem; color:#6060a0;">
-      Make sure OBS is streaming to Twitch before starting a match.
-    </div>
-    <button id="start-btn" onclick="startGame()">START MATCH</button>
-    <button id="reset-btn" onclick="resetGame()"
-      style="display:none; padding:0.4rem 1.5rem; background:#2a2a4a; color:#9090c0;
-             border:none; border-radius:4px; font-family:inherit; font-size:0.75rem;
-             cursor:pointer; letter-spacing:1px;">
-      FORCE RESET (clear stuck game)
-    </button>
+  <div id="obs-check" style="text-align:center; font-size:0.75rem; color:#6060a0; margin-top:1.5rem;">
+    Make sure OBS is streaming to Twitch before starting a match.
   </div>
-  <div id="status"></div>
 
   <section class="instructions">
     <h3>HOW TO WRITE A BOT</h3>
@@ -319,6 +340,40 @@ function clearGenStatus(port) {
   el.textContent = ""; el.className = "gen-status";
 }
 
+// Track per-port bot generation so the sticky start bar can show live status
+// and disable START while any bot is still being generated.
+const portStates = { 1: 'none', 2: 'none', 3: 'none', 4: 'none' };
+
+function renderChips() {
+  const wrap = document.getElementById('port-chips');
+  wrap.innerHTML = '';
+  for (let i = 1; i <= 4; i++) {
+    const s = portStates[i];
+    const chip = document.createElement('div');
+    chip.className = 'chip ' + (s === 'ready' ? 'ready' : s === 'generating' ? 'gen' : '');
+    let label;
+    if (s === 'ready') label = '&#10003; ready';
+    else if (s === 'generating') label = 'gen\u2026 <span class="spinner"></span>';
+    else label = '\u2014';
+    chip.innerHTML = `<strong>P${i}</strong> <span>${label}</span>`;
+    wrap.appendChild(chip);
+  }
+}
+renderChips();
+
+function setPortState(port, state) {
+  portStates[port] = state;
+  renderChips();
+  updateStartState();
+}
+
+function updateStartState() {
+  const anyGen = Object.values(portStates).some(s => s === 'generating');
+  const startBtn = document.getElementById('start-btn');
+  // Don't re-enable if a game is already running (startGame() handles that).
+  if (!startBtn.dataset.busy) startBtn.disabled = anyGen;
+}
+
 async function generateBot(port) {
   const btn = document.getElementById(`gen-btn-${port}`);
   const status = document.getElementById(`gen-status-${port}`);
@@ -333,6 +388,7 @@ async function generateBot(port) {
   }
 
   btn.disabled = true;
+  setPortState(port, 'generating');
   status.innerHTML = '<span class="spinner"></span>Generating bot... (this can take a minute)';
   status.className = "gen-status info";
 
@@ -350,13 +406,16 @@ async function generateBot(port) {
     if (data.ok) {
       status.textContent = `Generated bot ready (version ${data.version_id})`;
       status.className = "gen-status ok";
+      setPortState(port, 'ready');
     } else {
       status.textContent = data.error || "Generation failed";
       status.className = "gen-status err";
+      setPortState(port, 'none');
     }
   } catch (e) {
     status.textContent = "Request failed: " + e.message;
     status.className = "gen-status err";
+    setPortState(port, 'none');
   } finally {
     btn.disabled = false;
   }
@@ -518,6 +577,7 @@ async function restoreForm() {
       if (genStatus && p.generated_version) {
         genStatus.textContent = `Generated bot ready (version ${p.generated_version})`;
         genStatus.className = "gen-status ok";
+        setPortState(p.port, 'ready');
       }
       if (typeof updateInfo === 'function') updateInfo(p.port);
     }
@@ -537,6 +597,8 @@ async function startGame() {
   const btn = document.getElementById('start-btn');
   const status = document.getElementById('status');
   btn.disabled = true;
+  btn.dataset.busy = '1';
+  updateStartState();
 
   const players = [1,2,3,4].map(i => ({
     port: i,
@@ -558,15 +620,17 @@ async function startGame() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Error");
 
-    status.textContent = "Dolphin is launching — watch page will open shortly...";
+    status.textContent = "Match queued — Dolphin is launching...";
     status.className = "ok";
 
-    // Poll until game is actually in_game, then redirect
+    // Poll until the match is actually in-game, then update the status.
+    // Stay on the lobby page so viewers can keep watching the stream here.
     const poll = setInterval(async () => {
       const s = await fetch('/api/state').then(r => r.json());
       if (s.phase === 'in_game' || s.phase === 'postgame') {
         clearInterval(poll);
-        window.location.href = '/watch';
+        status.textContent = "Match in progress.";
+        status.className = "ok";
       }
     }, 1000);
 
@@ -574,6 +638,9 @@ async function startGame() {
     status.textContent = e.message;
     status.className = "err";
     btn.disabled = false;
+  } finally {
+    delete btn.dataset.busy;
+    updateStartState();
   }
 }
 </script>
