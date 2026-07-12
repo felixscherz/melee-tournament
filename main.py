@@ -8,21 +8,19 @@ Usage:
 import asyncio
 import logging
 import signal
-from pathlib import Path
 
-import toml
 import uvicorn
 
+from core.config import load_settings
 from core.game_state import app_state
 from core.melee_orchestrator import MeleeOrchestrator
 import frontend.app as webapp
 
 log = logging.getLogger(__name__)
-CONFIG_PATH = Path(__file__).parent / "config" / "settings.toml"
 
 
 async def main():
-    config = toml.load(CONFIG_PATH)
+    config = load_settings()
 
     orchestrator = MeleeOrchestrator(config=config, state=app_state)
     webapp._orchestrator = orchestrator

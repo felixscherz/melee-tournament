@@ -10,6 +10,10 @@ assets/
 *.iso
 *.gcm
 
+# Per-machine settings (copy from config/settings.example.toml).
+# Committing this would leak your domain / Twitch channel and cause pull conflicts.
+config/settings.toml
+
 # WireGuard tunnel config (contains the Mac private key)
 config/wireguard/
 

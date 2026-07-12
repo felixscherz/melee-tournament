@@ -1,0 +1,72 @@
+# Smash Tournament — settings template.
+#
+# Copy this file to config/settings.toml and edit it for your machine:
+#
+#     cp config/settings.example.toml config/settings.toml
+#
+# config/settings.toml is gitignored, so your personal values (domain, Twitch
+# channel, paths) never get committed. If settings.toml is missing, the app
+# falls back to this file, so the defaults below are a working localhost setup.
+
+[dolphin]
+# Path to the Slippi Dolphin binary (NOT the .app bundle). On macOS this lives
+# inside the bundle. Download Slippi Dolphin from https://slippi.gg/downloads.
+path = "/Applications/Slippi Dolphin.app/Contents/MacOS/Slippi Dolphin"
+# Path to your Melee ISO (NTSC v1.02 / GALE01 r2). You must legally own the
+# game and dump your own disc — we cannot provide an ISO. A relative path is
+# resolved from the repo root; the default below expects assets/melee.iso.
+iso  = "assets/melee.iso"
+# ENet port libmelee uses to talk to Dolphin. Leave as-is unless it collides.
+port = 51441
+
+[ollama]
+# Optional. Only used for in-game LLM decisions, which are disabled unless
+# Ollama is installed and running. Prompt-to-bot generation uses opencode
+# (see [opencode]), not Ollama, so you can ignore this section entirely.
+model    = "llama3"
+base_url = "http://localhost:11434"
+
+[server]
+# Bind address and port for the FastAPI dashboard. 0.0.0.0 exposes it on your
+# LAN; use 127.0.0.1 to keep it local-only.
+host = "0.0.0.0"
+port = 8080
+
+[domains]
+# Public hostname that serves the dashboard, if you expose it to the internet
+# (see "Going public" in the README). This is only used to whitelist the host
+# for the embedded Twitch player. localhost and 127.0.0.1 always work without
+# any setting here — leave this empty for a local-only setup.
+frontend = ""
+
+[streaming]
+# Your Twitch channel name — the part after twitch.tv/ (e.g. for
+# twitch.tv/ninja this is "ninja"). Used to embed the live stream on the
+# /watch and /lobby pages. Leave empty to show a blank player area.
+#
+# This is NOT your Twitch stream key. The stream key is a secret you paste into
+# OBS (Settings -> Stream); it never goes in this file. See the README.
+twitch_channel = ""
+
+[opencode]
+# The model the bot-writer agent uses to generate bots from prompts. Passed to
+# `opencode run --model ...`. Use any model id your opencode install can reach
+# (run `opencode models` to list them). Requires opencode installed and its
+# provider authenticated. Leave empty to use the default set in the agent file
+# (.opencode/agents/bot-writer.md).
+model = "opencode/deepseek-v4-flash-free"
+
+[bots]
+# Subprocess-sandbox tunables. See IMPROVE_BOT_ISOLATION.md and
+# core/bot_process.py for the full model. Each port's bot runs in its own
+# child process; the parent sends a JSON frame snapshot and waits this long
+# (in milliseconds) for an action response. On miss, neutral input is applied
+# for that frame; after max_misses consecutive misses the worker is killed
+# and the orchestrator falls back to the trusted in-process default bot
+# (core/bots/<char>.py) for the rest of the match.
+deadline_ms = 10
+max_misses  = 3
+# Working directory the sandboxed child chdir's into. The bot cannot write
+# anywhere on disk (RLIMIT_FSIZE = 0); this is just to keep cwd out of the
+# repo root. Created on first spawn.
+scratch_dir = ".bot_scratch"

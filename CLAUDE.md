@@ -379,7 +379,11 @@ The generation pipeline:
   the bot, and iterates on `core/test_bot.py` until it passes.
 - The agent's `edit` permission is scoped to `generated/**` only; its `bash`
   permission is scoped to the test harness command only.
-- Model: `opencode/deepseek-v4-flash-free`.
+- Model: from `[opencode] model` in `config/settings.toml`, passed to
+  `opencode run --model ...` by `core/bot_generator.py`. If that key is empty,
+  opencode uses the default declared in `.opencode/agents/bot-writer.md`
+  (`opencode/deepseek-v4-flash-free`). settings.toml is the single source of
+  truth — change the model there, not in the agent file.
 
 ### Test harness (`core/test_bot.py`)
 
@@ -404,23 +408,32 @@ above); it still hot-reloads on mtime change in that fallback path.
 
 ## Configuration
 
-All configuration lives in `config/settings.toml`. Key sections:
+All configuration lives in `config/settings.toml`, loaded through
+`core/config.load_settings()` (used by `main.py`, `frontend/app.py`, and
+`core/bot_generator.py` - do not re-add per-file `toml.load` calls). That file
+is **gitignored and per-machine**; the committed template is
+`config/settings.example.toml`. If `settings.toml` is missing, `load_settings()`
+falls back to the example and logs a warning, so a fresh clone still boots. When
+adding a new setting, add it to the example (with a comment) and to the README's
+Configuration reference table. Key sections:
 
 ```toml
 [dolphin]
 path = "/Applications/Slippi Dolphin.app/Contents/MacOS/Slippi Dolphin"
-iso  = "/Users/felixscherz/workspaces/personal/smash-tournament/assets/melee.iso"
-port = 51441   # ENet port libmelee uses to talk to Dolphin
+iso  = "assets/melee.iso"   # relative paths resolve from repo root
+port = 51441                # ENet port libmelee uses to talk to Dolphin
 
 [domains]
-frontend = "smash.felixscherz.me"
-stream   = "stream-smash.felixscherz.me"
+frontend = "smash.felixscherz.me"   # empty = local-only; only whitelists the Twitch embed host
 
 [streaming]
 # OBS streams directly to Twitch (no WebRTC/OME relay). Set the Twitch channel
 # name (the part after twitch.tv/) so the embedded player works on /watch and
 # /lobby.
 twitch_channel = "v4in11111"
+
+[opencode]
+model = "opencode/deepseek-v4-flash-free"   # bot-writer model; empty = agent-file default
 ```
 
 ---

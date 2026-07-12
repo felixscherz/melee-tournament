@@ -1,5 +1,9 @@
 # Extended Setup Guide
 
+This supplements the [README](../README.md) quickstart with per-component detail.
+All runtime config lives in `config/settings.toml` (copy it from
+`config/settings.example.toml`); see the README's Configuration reference.
+
 ## 1. Dolphin (Slippi Build) - macOS
 
 `libmelee` requires the **Slippi** fork of Dolphin, not the mainline build.
@@ -18,7 +22,27 @@ You must legally dump the ISO from your own disc.
 - Required version: **NTSC v1.02** (GALE01 r2)
 - Place the ISO at: `assets/melee.iso`
 
-## 3. Ollama (Local LLM)
+## 3. opencode (Prompt-to-Bot) — optional
+
+The lobby's GENERATE button turns a natural-language prompt into a bot by shelling
+out to the [`opencode`](https://opencode.ai) CLI with the `bot-writer` agent. Skip
+this if you only use pasted code and default bots.
+
+1. Install opencode per its docs and confirm it's on your `PATH`: `which opencode`.
+2. Authenticate a provider so opencode can reach a model: `opencode auth`.
+3. Pick a model and set it in `config/settings.toml`:
+   ```toml
+   [opencode]
+   model = "opencode/deepseek-v4-flash-free"   # or any id from `opencode models`
+   ```
+   Leave `model = ""` to use the default declared in
+   `.opencode/agents/bot-writer.md`. The value in `settings.toml` is passed to
+   `opencode run --model ...`, so it's the single source of truth.
+
+## 4. Ollama (Local LLM) — optional, currently unused
+
+In-game LLM decisions are not wired up (they always fall back), so you can skip
+this entirely. If you want to experiment:
 
 ```bash
 brew install ollama
@@ -28,7 +52,7 @@ ollama pull llama3      # download the Llama 3 8B model (~5GB)
 
 Verify: `curl http://localhost:11434/api/tags`
 
-## 4. OBS Studio -> Twitch
+## 5. OBS Studio -> Twitch
 
 1. OBS -> Settings -> Stream -> Custom RTMP
 2. Server: `rtmp://live.twitch.tv/app`
@@ -38,11 +62,17 @@ Verify: `curl http://localhost:11434/api/tags`
 
 OBS pushes directly to Twitch's CDN. No local relay (OME) is involved.
 
-## 5. Hetzner VM Setup (WireGuard)
+## 6. Going public — one example (WireGuard + Hetzner)
 
-The VM's WireGuard server, nginx, and TLS are provisioned from the `home` Ansible
-repo (not this repo). See `DEPLOYMENT.md` for the tags (`vpn`, `proxy`) and the
-Mac-side WireGuard setup. On the Mac:
+**Optional and setup-specific.** The dashboard is local/LAN only by default; to
+expose it remotely, put `http://<your-mac>:8080` behind any reverse proxy with TLS
+(Cloudflare Tunnel, Tailscale Funnel, a VPS with nginx/Caddy over a VPN, …). Set
+`[domains] frontend` to the public hostname so the Twitch embed is whitelisted.
+
+Below is the **author's** worked example: an on-demand WireGuard tunnel to a
+Hetzner VM whose WireGuard server, nginx, and TLS are provisioned from a separate
+private `home` Ansible repo (not this repo). See `DEPLOYMENT.md` for the tags
+(`vpn`, `proxy`) and full Mac-side WireGuard setup. On the Mac:
 
 ```bash
 brew install wireguard-tools
@@ -56,7 +86,7 @@ Open firewall ports (Hetzner Cloud console -> Firewall rules):
 # UDP: 51820 (WireGuard)
 ```
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Fix |
 |---|---|

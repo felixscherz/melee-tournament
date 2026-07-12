@@ -1,5 +1,13 @@
 # Deployment — WireGuard Tunnel + Hetzner Proxy
 
+> **This is one worked example of exposing the dashboard publicly, not a required
+> path.** It documents the author's setup. If you're self-hosting, any reverse
+> proxy with TLS works (Cloudflare Tunnel, Tailscale Funnel, a VPS with
+> nginx/Caddy over a VPN, …) — just point it at `http://<your-mac>:8080` and set
+> `[domains] frontend` in `config/settings.toml` to your public hostname. See the
+> README's "Going public" section. The VM side below lives in a **separate
+> private repo** and can't be reproduced verbatim from this one.
+
 Exposes the local Smash Tournament dashboard (FastAPI) to the internet over a
 **WireGuard** tunnel to a Hetzner VM with nginx TLS termination.
 

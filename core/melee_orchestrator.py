@@ -17,7 +17,6 @@ from typing import Optional
 
 import melee
 import melee.enums
-import toml
 
 from core.bot_loader import BotLoader
 from core.bot_process import BotWorker
@@ -27,7 +26,6 @@ from core.roster import CHARACTER_MAP, default_bot_path
 
 log = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
 STAGE = melee.Stage.FINAL_DESTINATION
 
 # Offline Melee VS mode has no controller-driven quit: L+R+A+Start (LRAS) only

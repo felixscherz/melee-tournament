@@ -5,7 +5,6 @@ import json
 import logging
 from pathlib import Path
 
-import toml
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,17 +14,17 @@ from starlette.requests import Request
 
 from core.bot_generator import GenerateError, generate_bot, get_generated_path
 from core.bot_validator import BotValidationError, validate_bot_code
+from core.config import load_settings
 from core.game_state import Phase, PlayerConfig, app_state
 from core.roster import SELECTABLE_CHARACTERS, is_valid_character
 
 log = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.toml"
 BOTS_DIR = Path(__file__).parent.parent / "core" / "bots"
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-config = toml.load(CONFIG_PATH)
+config = load_settings()
 
 app = FastAPI(title="Smash Tournament")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -70,9 +69,13 @@ def _twitch_context() -> dict:
     OBS streams directly to Twitch (no WebRTC/OME relay). Twitch's iframe
     requires the exact host(s) serving the page in `parent`.
     """
+    parents = ["localhost", "127.0.0.1"]
+    frontend = (config.get("domains") or {}).get("frontend", "").strip()
+    if frontend:
+        parents.insert(0, frontend)
     return {
-        "twitch_channel": config["streaming"].get("twitch_channel", "").strip(),
-        "twitch_parents": [config["domains"]["frontend"], "localhost", "127.0.0.1"],
+        "twitch_channel": config.get("streaming", {}).get("twitch_channel", "").strip(),
+        "twitch_parents": parents,
     }
 
 

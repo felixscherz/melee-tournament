@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from core.bot_validator import BotValidationError, validate_bot_code
+from core.config import load_settings
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +118,13 @@ async def generate_bot(port: int, character: str, prompt: str) -> dict:
     rel = output_path.relative_to(REPO_ROOT)
     message = _build_agent_message(character, port, prompt, output_path)
 
-    cmd = ["opencode", "run", "--auto", "--agent", "bot-writer", message]
+    cmd = ["opencode", "run", "--auto", "--agent", "bot-writer"]
+    # Model comes from [opencode] model in settings.toml. If unset, opencode
+    # falls back to the default declared in .opencode/agents/bot-writer.md.
+    model = (load_settings().get("opencode") or {}).get("model", "").strip()
+    if model:
+        cmd += ["--model", model]
+    cmd.append(message)
 
     log.info("Generating bot for port %d (%s) -> %s", port, character, rel)
 
