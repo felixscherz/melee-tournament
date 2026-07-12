@@ -48,7 +48,7 @@ class MeleeOrchestrator:
         self._controllers: dict[int, melee.Controller] = {}
         # Subprocess sandbox workers for user bot code. One per port, spawned
         # in queue_match, torn down on match end / abort. See
-        # IMPROVE_BOT_ISOLATION.md and core/bot_process.py.
+        # docs/IMPROVE_BOT_ISOLATION.md and core/bot_process.py.
         self._bot_workers: dict[int, BotWorker] = {}
         # Trusted in-process fallbacks (core/bots/<char>.py), used when the
         # subprocess worker for a port dies or hits the deadline too many

@@ -62,11 +62,24 @@ Hetzner firewall must allow inbound **UDP 51820** (WireGuard) plus TCP 22/80/443
    ```
 3. Add the Mac's public key (`mac.pubkey`) as a peer in the `home` repo's
    `server_wg0.conf.j2` (`AllowedIPs = 10.0.0.20/32`) and deploy the `vpn` tag.
-4. Write `config/wireguard/wg0-smash.conf` (gitignored) - `[Interface]` with the
-   private key + `Address = 10.0.0.20/24`, MTU `1380`; `[Peer]` with the VM's
-   `wg0` public key, `Endpoint = home.felixscherz.me:51820`,
-   `AllowedIPs = 10.0.0.0/24` (subnet only - not `0.0.0.0/0`),
-   `PersistentKeepalive = 25`. Full template in `VPN-MIGRATION.md` (Phase 1).
+4. Write `config/wireguard/wg0-smash.conf` (gitignored):
+   ```ini
+   [Interface]
+   PrivateKey = <contents of mac.privkey>
+   Address    = 10.0.0.20/24
+   MTU        = 1380
+
+   [Peer]
+   PublicKey           = <VM wg0 public key: ssh home.proxy 'sudo wg show wg0 public-key'>
+   Endpoint            = home.felixscherz.me:51820
+   AllowedIPs          = 10.0.0.0/24
+   PersistentKeepalive = 25
+   ```
+   `AllowedIPs = 10.0.0.0/24` routes **only** the VPN subnet through the tunnel -
+   the Mac's normal internet is untouched. Do **not** use `0.0.0.0/0`. Keep
+   `MTU 1380` equal on both ends to avoid fragmentation over WireGuard. Bring it
+   up with `./stream-vpn.sh up`; the handshake completes once the VM knows the
+   peer (`vpn` tag deployed).
 
 ---
 

@@ -20,7 +20,7 @@ The worker is deliberately self-contained: it imports only the stdlib and
 `melee` (for enum constants), so it does not need the project's PYTHONPATH and
 has no dependency on `core.*` modules that user code could try to reach.
 
-Network isolation is NOT enforced here yet. See IMPROVE_BOT_ISOLATION.md for
+Network isolation is NOT enforced here yet. See docs/IMPROVE_BOT_ISOLATION.md for
 the layered plan (macOS sandbox profile or `--network none` container).
 
 Protocol

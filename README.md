@@ -34,7 +34,7 @@ behind your own reverse proxy.
 ```
 
 Bots run in a per-port subprocess sandbox (rlimits, scrubbed env, 10ms per-frame
-deadline). Details in `CLAUDE.md` and `IMPROVE_BOT_ISOLATION.md`. The video stream
+deadline). Details in `CLAUDE.md` and `docs/IMPROVE_BOT_ISOLATION.md`. The video stream
 goes straight from OBS to Twitch's CDN — the dashboard never carries video.
 
 ---
@@ -204,7 +204,7 @@ own** — any of these work:
 Whatever you use, set `[domains] frontend` to the public hostname so the Twitch
 embed is whitelisted for that host.
 
-`DEPLOYMENT.md` and `VPN-MIGRATION.md` document **one worked example** — the
+`docs/DEPLOYMENT.md` documents **one worked example** — the
 author's on-demand WireGuard tunnel to a Hetzner VM with nginx (`stream-vpn.sh` +
 an Ansible-managed VM). Treat it as a reference, not a required path; the VM side
 lives in a separate private repo.

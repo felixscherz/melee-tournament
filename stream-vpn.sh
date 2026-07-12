@@ -3,7 +3,7 @@
 # Bring the smash WireGuard tunnel up/down on demand.
 #
 # The Mac joins the 10.0.0.0/24 VPN only while the dashboard needs to be
-# public; the rest of the time it stays off the VPN. See VPN-MIGRATION.md
+# public; the rest of the time it stays off the VPN. See docs/DEPLOYMENT.md
 # for the full setup.
 #
 #   ./stream-vpn.sh up       # join the VPN (dashboard goes public)
@@ -34,7 +34,7 @@ case "${1:-}" in
     else
       if [ ! -f "$CONF" ]; then
         echo "Config not found: $CONF" >&2
-        echo "Create it per VPN-MIGRATION.md (Phase 1) first." >&2
+        echo "Create it per docs/DEPLOYMENT.md (Mac side setup) first." >&2
         exit 1
       fi
       sudo wg-quick up "$CONF"

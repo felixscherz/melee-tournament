@@ -57,7 +57,7 @@ def is_valid_character(name: str) -> bool:
 # simple way. Used both by the lobby (frontend/app.py) when no pasted/generated
 # bot is provided, and by the orchestrator as the in-process fallback when a
 # subprocess worker dies mid-match (see core/bot_process.py +
-# IMPROVE_BOT_ISOLATION.md). These files are trusted code shipped with the
+# docs/IMPROVE_BOT_ISOLATION.md). These files are trusted code shipped with the
 # repo, so running them in-process (no sandbox) is safe.
 _DEFAULT_BOT_FILES = {
     "FOX": "fox.py",

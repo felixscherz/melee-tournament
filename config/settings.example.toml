@@ -57,7 +57,7 @@ twitch_channel = ""
 model = "opencode/deepseek-v4-flash-free"
 
 [bots]
-# Subprocess-sandbox tunables. See IMPROVE_BOT_ISOLATION.md and
+# Subprocess-sandbox tunables. See docs/IMPROVE_BOT_ISOLATION.md and
 # core/bot_process.py for the full model. Each port's bot runs in its own
 # child process; the parent sends a JSON frame snapshot and waits this long
 # (in milliseconds) for an action response. On miss, neutral input is applied

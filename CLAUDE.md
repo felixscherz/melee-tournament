@@ -50,8 +50,7 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
 
 The WireGuard tunnel is only used to expose the FastAPI dashboard publicly. The
 video stream goes directly from OBS to Twitch's CDN, so the Mac uploads one copy
-regardless of viewer count. Full migration rationale in `VPN-MIGRATION.md`;
-steady-state ops in `DEPLOYMENT.md`.
+regardless of viewer count. Setup + steady-state ops in `docs/DEPLOYMENT.md`.
 
 ---
 
@@ -310,7 +309,7 @@ drops `RLIMIT_CPU`, `RLIMIT_FSIZE = 0`, `RLIMIT_NOFILE`, `RLIMIT_CORE`, and
 gone. RCE-via-reflection is over (separate address space), CPU/mem/file-write
 DoS is bounded by rlimits, and the parent enforces a 10ms per-frame deadline
 via `select.select([stdout_fd], [], [], deadline)` so a stuck bot can never
-stall the 60fps loop. See `IMPROVE_BOT_ISOLATION.md` for the full design
+stall the 60fps loop. See `docs/IMPROVE_BOT_ISOLATION.md` for the full design
 record and the remaining TODOs (network isolation is the big one).
 
 Failure and lifecycle semantics an agent needs to know:
@@ -469,7 +468,7 @@ OBS is already configured. If it ever needs to be set up again:
 The FastAPI dashboard is exposed to the internet over a **WireGuard** tunnel to
 the Hetzner VM with nginx TLS termination. The Mac joins the `10.0.0.0/24` VPN
 **on-demand**, only while the dashboard needs to be public. Full setup +
-rationale in `VPN-MIGRATION.md`; steady-state ops in `DEPLOYMENT.md`.
+steady-state ops in `docs/DEPLOYMENT.md`.
 
 ```bash
 ./stream-vpn.sh up       # join VPN (dashboard goes public at smash.felixscherz.me)
