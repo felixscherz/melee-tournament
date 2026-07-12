@@ -97,7 +97,7 @@ def _build_agent_message(
         f"Output file: {rel}\n\n"
         f"Load the libmelee-bot-interface and melee-strategy skills first. "
         f"Then write the bot to {rel}. "
-        f"Test it with .venv/bin/python core/test_bot.py {rel} until it passes. "
+        f"Test it with uv run core/test_bot.py {rel} until it passes. "
         f"Print BOT_WRITTEN: {rel} when done."
     )
 

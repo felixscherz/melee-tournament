@@ -1,8 +1,10 @@
 # CSS Navigation — Debugging Erratic Cursor Movement
 
 Use this when `choose_character` causes cursors to move in unexpected
-directions or the match never starts. All observations are from reading
-`.venv/lib/python3.13/site-packages/melee/menuhelper.py` directly.
+directions or the match never starts. All observations are from reading the
+installed `melee/menuhelper.py` directly (find it with
+`uv run python -c "import melee, os; print(melee.__file__)"`, typically
+`.venv/lib/python3.*/site-packages/melee/menuhelper.py`).
 
 ---
 

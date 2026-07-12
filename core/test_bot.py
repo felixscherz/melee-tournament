@@ -7,7 +7,7 @@ without needing Dolphin or a live match. Used by the bot-writer agent to
 iterate on its code until it passes.
 
 Usage:
-    python core/test_bot.py <path_to_bot.py>
+    uv run core/test_bot.py <path_to_bot.py>
 
 Exit code 0 = all scenarios passed.
 Exit code 1 = one or more scenarios failed (details on stderr).
@@ -359,7 +359,7 @@ def run_tests(bot_path):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python core/test_bot.py <path_to_bot.py>", file=sys.stderr)
+        print("Usage: uv run core/test_bot.py <path_to_bot.py>", file=sys.stderr)
         sys.exit(1)
 
     bot_path = Path(sys.argv[1])

@@ -1,0 +1,27 @@
+[project]
+name = "smash-tournament"
+version = "0.1.0"
+description = "Self-hosted Super Smash Bros. Melee bot platform - submit Python bots or LLM prompts, stream live to Twitch via Slippi Dolphin."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Felix Scherz" }]
+
+dependencies = [
+    "melee>=0.47.2",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "aiohttp>=3.9.0",
+    "aiofiles>=23.0.0",
+    "toml>=0.10.2",
+    "python-multipart>=0.0.9",
+    "jinja2>=3.1.0",
+    "websockets>=12.0",
+]
+
+[tool.uv]
+# Application, not a library: don't build/install the project itself, only its
+# dependencies. Run via `uv run main.py`. The virtualenv lives at ./.venv (the
+# default) so the bot subprocess sandbox (sys.executable), OBS, and stream-vpn.sh
+# all keep working unchanged.
+package = false

@@ -9,7 +9,7 @@ permission:
   bash:
     "*": deny
     "python core/test_bot.py *": allow
-    ".venv/bin/python core/test_bot.py *": allow
+    "uv run core/test_bot.py *": allow
   read: allow
   glob: allow
   grep: allow
@@ -69,7 +69,7 @@ The user's prompt describes the playstyle. Translate it into concrete logic:
 After writing the bot, run the test harness:
 
 ```bash
-.venv/bin/python core/test_bot.py <path_to_your_bot_file>
+uv run core/test_bot.py <path_to_your_bot_file>
 ```
 
 This runs your bot against 12 canned gamestate scenarios (20 frames each)

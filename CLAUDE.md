@@ -61,7 +61,7 @@ regardless of viewer count. Setup + steady-state ops in `docs/DEPLOYMENT.md`.
 | Slippi Dolphin | `/Applications/Slippi Dolphin.app` | Intel binary, runs under Rosetta 2 |
 | Rosetta 2 | System | Already installed |
 | Melee ISO | `assets/melee.iso` | NTSC v1.02 (GALE01 r2) |
-| Python venv | `.venv/` | Python 3.13, activate before running anything |
+| uv | `$(command -v uv)` | Manages Python + deps. Virtualenv at `.venv/` (Python 3.13). Run everything via `uv run` — no manual activation. Deps declared in `pyproject.toml`, pinned in `uv.lock` |
 | OBS Studio | `/Applications/OBS.app` | Configured for 60fps, 6000 Kbps, no B-frames; pushes directly to Twitch |
 | wireguard-tools | `$(brew --prefix)/bin/wg` | `wg`/`wg-quick`; tunnel config `config/wireguard/wg0-smash.conf` (gitignored) |
 
@@ -71,8 +71,8 @@ regardless of viewer count. Setup + steady-state ops in `docs/DEPLOYMENT.md`.
 
 ```bash
 # 1. Start the unified server (FastAPI + orchestrator; launches Dolphin automatically)
-source .venv/bin/activate
-python main.py
+#    First run (or after pulling): `uv sync` to install/update deps from uv.lock.
+uv run main.py
 
 # 2. Open OBS and click Start Streaming
 #    (OBS is already configured to push directly to Twitch — just hit the button)
@@ -85,17 +85,14 @@ open http://localhost:8080/lobby
 
 ## How to Run the Game Loop
 
-Always activate the venv first:
-
-```bash
-source .venv/bin/activate
-```
+Run everything through `uv run` (no venv activation needed — uv resolves the
+interpreter and deps from `pyproject.toml` / `uv.lock`):
 
 Run the unified launcher (starts FastAPI on :8080 and launches Dolphin once,
 keeping it alive across matches so OBS captures a stable window):
 
 ```bash
-python main.py
+uv run main.py
 ```
 
 Dolphin boots the ISO and idles at the menus. Matches are queued via the
@@ -148,8 +145,8 @@ The full write-up lives in the `libmelee-game-loop` skill. Summary:
 ### Critical: the PyPI package is called `melee`, not `libmelee`
 
 ```bash
-pip install melee          # correct
-pip install libmelee       # wrong — does not exist on PyPI
+uv add melee              # correct
+uv add libmelee           # wrong — does not exist on PyPI
 ```
 
 Current version: **0.47.2**
@@ -392,7 +389,7 @@ dict shape, stick ranges, and button keys. Used by the bot-writer agent to
 iterate. Can also be run manually:
 
 ```bash
-.venv/bin/python core/test_bot.py <path_to_bot.py>
+uv run core/test_bot.py <path_to_bot.py>
 ```
 
 Bots live at fixed paths in `core/bots/` (one per character) and are

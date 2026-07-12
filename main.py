@@ -2,9 +2,9 @@
 Unified launcher — runs FastAPI and the Melee orchestrator in the same event loop.
 
 Usage:
-    source .venv/bin/activate
-    python main.py
+    uv run main.py
 """
+
 import asyncio
 import logging
 import signal
@@ -49,14 +49,14 @@ async def main():
 
     # Fail fast: check port is free before launching Dolphin
     import socket as _socket
+
     with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
         _s.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
         try:
             _s.bind((host, port))
         except OSError:
             raise RuntimeError(
-                f"Port {port} is already in use. "
-                f"Run: lsof -ti :{port} | xargs kill -9"
+                f"Port {port} is already in use. Run: lsof -ti :{port} | xargs kill -9"
             )
 
     try:
@@ -67,5 +67,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    )
     asyncio.run(main())

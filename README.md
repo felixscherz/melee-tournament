@@ -49,19 +49,21 @@ This is the fastest path. Everything runs on your Mac; nothing is exposed public
 |---|---|---|
 | **Slippi Dolphin** | `libmelee` needs the Slippi fork, not mainline Dolphin | https://slippi.gg/downloads — move `Slippi Dolphin.app` to `/Applications/` |
 | **Melee ISO** (NTSC v1.02 / GALE01 r2) | The game itself. You must legally own it | Dump your own disc ([guide](https://wiki.dolphin-emu.org/index.php?title=Ripping_Games)). We cannot provide one. Place at `assets/melee.iso` |
-| **Python 3.12+** | Runs the server + orchestrator | `brew install python@3.12` |
+| **uv** | Manages Python + dependencies (installs its own Python, no Homebrew Python needed) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (see [uv docs](https://docs.astral.sh/uv/getting-started/installation/)) |
 | **OBS Studio** | Captures Dolphin and streams to Twitch | `brew install --cask obs` |
 | **opencode** *(optional)* | Prompt-to-bot generation | See [Prompt-to-bot generation](#prompt-to-bot-generation-optional). Skip it and bots still work via pasted code and defaults |
 | **Ollama** *(optional)* | In-game LLM decisions (currently unused; always falls back) | Skip it |
+
+> Python 3.12+ is required, but you don't install it yourself: `uv` downloads and
+> manages the interpreter. The version is pinned by `requires-python` in
+> `pyproject.toml` and the exact resolved set is recorded in `uv.lock`.
 
 ### 2. Install
 
 ```bash
 git clone <this-repo> smash-tournament
 cd smash-tournament
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync     # creates .venv/, downloads a compatible Python if needed, installs all deps from uv.lock
 ```
 
 ### 3. Configure
@@ -85,13 +87,13 @@ the embedded stream to show up.
 ### 4. Run
 
 ```bash
-source .venv/bin/activate
-python main.py          # starts FastAPI on :8080 AND launches Dolphin
+uv run main.py          # starts FastAPI on :8080 AND launches Dolphin
 ```
 
 `main.py` is the single entry point — it runs the web server and the game
 orchestrator in one event loop and launches Dolphin for you. **Do not run uvicorn
-separately.**
+separately.** `uv run` resolves the interpreter and dependencies from
+`pyproject.toml` / `uv.lock` automatically; no manual venv activation needed.
 
 Then open the lobby, pick 4 characters, and start a match:
 
@@ -171,7 +173,7 @@ pasted code > generated > default):
 Test a bot without Dolphin:
 
 ```bash
-.venv/bin/python core/test_bot.py <path_to_bot.py>
+uv run core/test_bot.py <path_to_bot.py>
 ```
 
 Bots run in a per-port subprocess sandbox and hot-reload on file change — no
@@ -215,6 +217,8 @@ lives in a separate private repo.
 
 ```
 smash-tournament/
+├── pyproject.toml              # project + dependency declarations (uv-managed)
+├── uv.lock                     # pinned dependency lockfile (committed)
 ├── main.py                     # single entry point (server + orchestrator + Dolphin)
 ├── core/
 │   ├── config.py               # loads settings.toml (falls back to the example)

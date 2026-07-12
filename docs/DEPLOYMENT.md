@@ -87,7 +87,7 @@ Hetzner firewall must allow inbound **UDP 51820** (WireGuard) plus TCP 22/80/443
 
 ```bash
 ./stream-vpn.sh up                       # join VPN (dashboard goes public)
-source .venv/bin/activate && python main.py   # FastAPI + Dolphin
+uv run main.py                           # FastAPI + Dolphin
 # open OBS → Start Streaming (pushes directly to Twitch)
 # ... run matches ...
 ./stream-vpn.sh down                     # leave VPN when done

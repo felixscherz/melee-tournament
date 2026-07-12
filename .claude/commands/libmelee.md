@@ -1,8 +1,10 @@
 # libmelee v0.47.2 Reference
 
 This skill contains authoritative notes on the libmelee API derived from the
-installed package source at `.venv/lib/python3.13/site-packages/melee/` and the
-official docs at https://libmelee.readthedocs.io/en/latest/.
+installed package source (find it with
+`uv run python -c "import melee, os; print(os.path.dirname(melee.__file__))"`,
+typically `.venv/lib/python3.*/site-packages/melee/`) and the official docs at
+https://libmelee.readthedocs.io/en/latest/.
 
 Consult this before writing any code that touches menus, controllers, or game
 state. Many of the APIs have subtle gotchas that cause silent breakage.
@@ -12,7 +14,7 @@ state. Many of the APIs have subtle gotchas that cause silent breakage.
 ## Package name
 
 ```bash
-pip install melee   # correct — NOT "libmelee"
+uv add melee   # correct — NOT "libmelee"
 ```
 
 ---
