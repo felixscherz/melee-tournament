@@ -5,6 +5,7 @@ __pycache__/
 .DS_Store
 uploads/
 generated/
+.bot_scratch/
 assets/
 *.iso
 *.gcm

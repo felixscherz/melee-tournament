@@ -20,8 +20,14 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
                               │
                ┌──────────────┴──────────────┐
                │                             │
-         [LLM / Ollama]           [BotLoader — importlib hot-reload]
+         [LLM / Ollama]    [sandboxed bot subprocess per port]
+               │             (core/bot_process.BotWorker +
+               │              core/bot_worker.py, JSON/stdio IPC,
+               │              rlimits, scrubbed env, 10ms deadline)
                │                             │
+               │   ┌─ worker dies? ──► [trusted in-process default bot
+               │   │                     from core/bots/<char>.py, no sandbox]
+               │   │
                └──────────────┬──────────────┘
                               │
                        [FastAPI server]  :8080
@@ -273,6 +279,77 @@ class Bot:
 
 See `core/bot_template.py` for a working example with a simple chase-and-attack logic.
 
+> **The signature is unchanged from the bot author's perspective**, but bots no
+> longer run in-process. See "How bots actually run (subprocess sandbox)"
+> below for what happens between `act()` returning and the controller moving.
+
+---
+
+## How bots actually run (subprocess sandbox)
+
+User-submitted bot code (pasted code, prompt-generated, or the
+default-character bots when nobody pasted anything) runs in its own
+**subprocess per port**, not in the server process. The orchestrator
+(`core/melee_orchestrator.py`) spawns one `core/bot_process.BotWorker` per
+port in `queue_match()`, tears them down on match end / abort, and talks to
+each over JSON-on-stdio:
+
+- The parent sends one JSON snapshot per frame to the worker's stdin:
+  `{"frame": N, "port": 1, "players": {"1": {...}, "2": {...}, ...}}`
+- The worker (`core/bot_worker.py`, a self-contained entry point that imports
+  only stdlib + `melee`) reconstructs a `types.SimpleNamespace` view of the
+  gamestate (same shape as the mocks in `core/test_bot.py`), calls
+  `bot.act(gamestate, port)`, and writes a JSON response:
+  `{"frame": N, "action": {...}, "error": false}`.
+
+This is the security boundary. Before importing the bot module the worker
+drops `RLIMIT_CPU`, `RLIMIT_FSIZE = 0`, `RLIMIT_NOFILE`, `RLIMIT_CORE`, and
+`RLIMIT_AS` via `setrlimit`, and runs with a scrubbed environment (only
+`PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` are inherited) and
+`cwd = .bot_scratch`. Twitch keys, WireGuard config, OLLAMA URLs etc. are
+gone. RCE-via-reflection is over (separate address space), CPU/mem/file-write
+DoS is bounded by rlimits, and the parent enforces a 10ms per-frame deadline
+via `select.select([stdout_fd], [], [], deadline)` so a stuck bot can never
+stall the 60fps loop. See `IMPROVE_BOT_ISOLATION.md` for the full design
+record and the remaining TODOs (network isolation is the big one).
+
+Failure and lifecycle semantics an agent needs to know:
+
+- **Per-frame deadline (10ms, tunable in `config/settings.toml [bots]`).** On
+  miss: that port gets neutral input (`release_all`) for that frame.
+- **After `max_misses` (3) consecutive deadline misses OR bot-exception
+  responses**, the worker is killed and marked dead. The port then falls
+  back to the trusted in-process default bot (`core/bots/<char>.py`, or
+  `generic.py`) loaded via `BotLoader` for the rest of the match - that
+  character keeps playing simple AI, not standing still.
+- **Cold-start grace (`_COLD_START_BUDGET_S = 2s`):** the worker's first
+  successful response is given a 2s budget (Python startup + `import melee`
+  is ~130ms on this Mac) instead of 10ms, so cold respawn after a hot-reload
+  doesn't immediately trip `max_misses`. In production the worker is spawned
+  during CSS navigation and the first `act()` happens seconds later when
+  `IN_GAME` starts, so the grace is mostly defensive.
+- **Hot-reload is parent-side mtime + respawn.** Editing the bot file on
+  disk makes the next `act()` call kill and respawn the child. The first
+  post-respawn frame will likely miss (cold start); after that the new code
+  is live. `_decision_loop` checks mtime once per frame per port.
+- **Action clamping.** Every action coming back from a worker is type-checked
+  and clamped (sticks to `[0.0, 1.0]`, buttons normalized to exactly the
+  seven required keys) by `core/frame.clamp_action` before it reaches
+  `_apply` and libmelee. A malformed return cannot reach the controller.
+
+The static `core/bot_validator.py` stays as a fast pre-flight check at
+`/api/start` (the frontend rejects obviously bad pasted code before even
+writing it to disk) and inside `BotLoader.load()` (the in-process fallback
+path). It is defense-in-depth; the runtime sandbox is the boundary.
+
+**Bot author contract is unchanged.** Bots still `import melee`, define
+`class Bot`, and implement `act(gamestate, port) -> dict | None`. The
+`gamestate` argument is now a `types.SimpleNamespace` reconstruction (same
+field surface as `core/test_bot.py`'s mocks) instead of the live
+`melee.GameState`, but every existing bot (fox/marth/falcon/falco/generic
+and any prompt-generated bot) works without changes - that's the whole
+reason the snapshot is restricted to those fields.
+
 ### Three ways to control a player
 
 1. **Default AI** - leave the code box and prompt box blank. Uses the
@@ -316,9 +393,12 @@ iterate. Can also be run manually:
 ```
 
 Bots live at fixed paths in `core/bots/` (one per character) and are
-hot-reloaded by `core/bot_loader.py` using `importlib` whenever the file's
-mtime changes - no restart required. Generated bots in `generated/` are
-also hot-reloaded the same way.
+hot-reloaded at match time via the subprocess sandbox
+(`core/bot_process.BotWorker` watches the bot file's mtime and respawns the
+child on change - no restart required). Generated bots in `generated/` use
+the same mtime-respawn path. The in-process `core/bot_loader.py` is now
+used only for the trusted default-bot fallback (see "How bots actually run"
+above); it still hot-reloads on mtime change in that fallback path.
 
 ---
 
@@ -409,7 +489,10 @@ Routes (`frontend/app.py`):
 - `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action)
 
 Characters map to fixed bot files in `core/bots/` (fox.py, marth.py,
-falcon.py, falco.py), hot-reloaded by `core/bot_loader.py` on mtime change.
+falcon.py, falco.py) used as the trusted in-process fallback when a port's
+subprocess worker dies or no pasted/generated bot is provided. Live bot
+execution goes through the subprocess sandbox in `core/bot_process.py` /
+`core/bot_worker.py` (see "How bots actually run" above).
 Generated bots in `generated/` are resolved per-port via
 `generated/latest.json`.
 

@@ -20,3 +20,18 @@ stream   = "stream-smash.felixscherz.me"
 # name (the part after twitch.tv/) so the embedded player works on /watch and
 # /lobby. Leave empty to show a blank player area.
 twitch_channel = "v4in11111"
+
+[bots]
+# Subprocess-sandbox tunables. See IMPROVE_BOT_ISOLATION.md and
+# core/bot_process.py for the full model. Each port's bot runs in its own
+# child process; the parent sends a JSON frame snapshot and waits this long
+# (in milliseconds) for an action response. On miss, neutral input is applied
+# for that frame; after max_misses consecutive misses the worker is killed
+# and the orchestrator falls back to the trusted in-process default bot
+# (core/bots/<char>.py) for the rest of the match.
+deadline_ms = 10
+max_misses  = 3
+# Working directory the sandboxed child chdir's into. The bot cannot write
+# anywhere on disk (RLIMIT_FSIZE = 0); this is just to keep cwd out of the
+# repo root. Created on first spawn.
+scratch_dir = ".bot_scratch"

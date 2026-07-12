@@ -9,6 +9,7 @@ Flow:
   queue_match()  — set pending player configs; the game loop picks them up at CSS
   stop()         — shut everything down
 """
+
 import asyncio
 import logging
 from pathlib import Path
@@ -19,8 +20,10 @@ import melee.enums
 import toml
 
 from core.bot_loader import BotLoader
+from core.bot_process import BotWorker
+from core.frame import clamp_action, frame_snapshot
 from core.game_state import AppState, Phase, PlayerConfig, PlayerScore
-from core.roster import CHARACTER_MAP
+from core.roster import CHARACTER_MAP, default_bot_path
 
 log = logging.getLogger(__name__)
 
@@ -41,23 +44,38 @@ PORTS = [1, 2, 3, 4]
 
 class MeleeOrchestrator:
     def __init__(self, config: dict, state: AppState):
-        self.cfg   = config
+        self.cfg = config
         self.state = state
-        self.console: Optional[melee.Console]              = None
-        self._controllers: dict[int, melee.Controller]    = {}
-        self._bot_loaders: dict[int, BotLoader]           = {}
-        self._actions: dict[int, Optional[dict]]          = {p: None for p in PORTS}
-        self._lock            = asyncio.Lock()
-        self._menu_helpers    = {p: melee.MenuHelper() for p in PORTS}
+        self.console: Optional[melee.Console] = None
+        self._controllers: dict[int, melee.Controller] = {}
+        # Subprocess sandbox workers for user bot code. One per port, spawned
+        # in queue_match, torn down on match end / abort. See
+        # IMPROVE_BOT_ISOLATION.md and core/bot_process.py.
+        self._bot_workers: dict[int, BotWorker] = {}
+        # Trusted in-process fallbacks (core/bots/<char>.py), used when the
+        # subprocess worker for a port dies or hits the deadline too many
+        # times in a row. Run in-process: they are our code, not user code.
+        self._fallback_loaders: dict[int, BotLoader] = {}
+        self._actions: dict[int, Optional[dict]] = {p: None for p in PORTS}
+        self._lock = asyncio.Lock()
+        self._menu_helpers = {p: melee.MenuHelper() for p in PORTS}
         self._pending_players: Optional[list[PlayerConfig]] = None
-        self._active_players:  Optional[list[PlayerConfig]] = None
-        self._latest_gs: Optional[melee.GameState]        = None
-        self._loop_task: Optional[asyncio.Task]           = None
-        self._prev_menu: Optional[melee.Menu]             = None
+        self._active_players: Optional[list[PlayerConfig]] = None
+        self._latest_gs: Optional[melee.GameState] = None
+        self._loop_task: Optional[asyncio.Task] = None
+        self._prev_menu: Optional[melee.Menu] = None
         # When True, the game loop ignores bots and drives every controller off
         # the stage to force the current match to end (see abort_match /
         # _drive_self_destruct). Cleared once we reach the postgame screen.
-        self._force_end       = False
+        self._force_end = False
+        # Bot sandbox tunables (see [bots] in config/settings.toml).
+        bot_cfg = config.get("bots") or {}
+        self._bot_deadline_s = float(bot_cfg.get("deadline_ms", 10)) / 1000.0
+        self._bot_max_misses = int(bot_cfg.get("max_misses", 3))
+        repo_root = Path(__file__).resolve().parent.parent
+        self._scratch_dir = Path(
+            bot_cfg.get("scratch_dir", str(repo_root / ".bot_scratch"))
+        )
 
     # ------------------------------------------------------------------ #
     #  Public API                                                           #
@@ -66,14 +84,20 @@ class MeleeOrchestrator:
     async def launch(self):
         """Start Dolphin once and keep it running. Called at server startup."""
         import subprocess as _sp
+
         try:
             result = _sp.run(
                 ["lsof", "-ti", f":{self.cfg['dolphin']['port']}"],
-                capture_output=True, text=True
+                capture_output=True,
+                text=True,
             )
             for pid_str in result.stdout.split():
                 pid = int(pid_str.strip())
-                log.info("Killing stale Dolphin on port %s (pid %d)", self.cfg['dolphin']['port'], pid)
+                log.info(
+                    "Killing stale Dolphin on port %s (pid %d)",
+                    self.cfg["dolphin"]["port"],
+                    pid,
+                )
                 _sp.run(["kill", "-9", str(pid)])
         except Exception as exc:
             log.debug("Port cleanup skipped: %s", exc)
@@ -105,20 +129,32 @@ class MeleeOrchestrator:
 
     def queue_match(self, players: list[PlayerConfig]):
         """Queue a new match. Picked up by the game loop at the next CSS frame."""
-        self._bot_loaders = {}
+        self._teardown_workers()
+        self._bot_workers = {}
+        self._fallback_loaders = {}
         for p in players:
-            loader = BotLoader(upload_dir=Path("uploads"))
-            loader.load(p.bot_path)
-            self._bot_loaders[p.port] = loader
+            worker = BotWorker(
+                bot_path=p.bot_path,
+                scratch_dir=self._scratch_dir,
+                deadline_s=self._bot_deadline_s,
+                max_misses=self._bot_max_misses,
+            )
+            worker.spawn()
+            self._bot_workers[p.port] = worker
+            # Trusted in-process fallback for this port's character - loaded
+            # once per match, used only if the subprocess worker dies.
+            fallback = BotLoader(upload_dir=Path("uploads"))
+            fallback.load(default_bot_path(p.character))
+            self._fallback_loaders[p.port] = fallback
             self._actions[p.port] = None
 
-        self.state.phase   = Phase.STARTING
+        self.state.phase = Phase.STARTING
         self.state.players = players
-        self.state.scores  = {
+        self.state.scores = {
             p.port: PlayerScore(port=p.port, name=p.name, character=p.character)
             for p in players
         }
-        self.state.winner     = None
+        self.state.winner = None
         self._pending_players = players
         # Fresh MenuHelper instances so prior CSS state doesn't carry over
         self._menu_helpers = {p: melee.MenuHelper() for p in PORTS}
@@ -134,20 +170,27 @@ class MeleeOrchestrator:
         reset to IDLE once we reach the postgame screen. If nothing is live,
         reset now. Dolphin stays alive (OBS keeps capturing the same window).
         """
-        in_game = (self._latest_gs is not None
-                   and self._latest_gs.menu_state == melee.Menu.IN_GAME)
+        in_game = (
+            self._latest_gs is not None
+            and self._latest_gs.menu_state == melee.Menu.IN_GAME
+        )
         self._pending_players = None
         if in_game:
             self._force_end = True
+            # _drive_self_destruct ignores bots and writes controllers
+            # directly, so the subprocess workers are no longer needed.
+            self._teardown_workers()
             return
-        self._force_end      = False
+        self._force_end = False
         self._active_players = None
-        self._actions        = {p: None for p in PORTS}
+        self._teardown_workers()
+        self._actions = {p: None for p in PORTS}
         self.state.reset()
 
     def stop(self):
         if self._loop_task:
             self._loop_task.cancel()
+        self._teardown_workers()
         if self.console:
             try:
                 self.console.stop()
@@ -253,12 +296,15 @@ class MeleeOrchestrator:
         # lingers and the CSS/stage branches below re-select the same roster and
         # drive us right back into a new match (the "stuck at stage select" bug).
         if self._force_end and menu != melee.Menu.IN_GAME:
-            log.info("Forced end complete at %s — resetting to idle CSS",
-                     getattr(menu, "name", menu))
-            self._force_end       = False
-            self._active_players  = None
+            log.info(
+                "Forced end complete at %s — resetting to idle CSS",
+                getattr(menu, "name", menu),
+            )
+            self._force_end = False
+            self._active_players = None
             self._pending_players = None
-            self._actions         = {p: None for p in PORTS}
+            self._teardown_workers()
+            self._actions = {p: None for p in PORTS}
             self.state.reset()
 
         # On any menu transition, flush held inputs once. Entering CSS with A
@@ -270,10 +316,13 @@ class MeleeOrchestrator:
                 "MENU %s -> %s | frame=%s ready_to_start=%s force_end=%s "
                 "pending=%s active=%s coin_down=%s",
                 getattr(self._prev_menu, "name", self._prev_menu),
-                getattr(menu, "name", menu), gs.frame,
-                getattr(gs, "ready_to_start", "?"), self._force_end,
+                getattr(menu, "name", menu),
+                gs.frame,
+                getattr(gs, "ready_to_start", "?"),
+                self._force_end,
                 self._pending_players is not None,
-                self._active_players is not None, coins,
+                self._active_players is not None,
+                coins,
             )
             self._prev_menu = menu
             for ctrl in self._controllers.values():
@@ -332,8 +381,11 @@ class MeleeOrchestrator:
             # CSS and wait there — no reason to sit on the login screen. With no
             # players we use a default character and autostart=False so we stop
             # at CSS; once a match is queued the CSS branch above takes over.
-            char = (CHARACTER_MAP.get(players[0].character, IDLE_CHARACTER)
-                    if players else IDLE_CHARACTER)
+            char = (
+                CHARACTER_MAP.get(players[0].character, IDLE_CHARACTER)
+                if players
+                else IDLE_CHARACTER
+            )
             self._menu_helpers[PORTS[0]].menu_helper_simple(
                 gamestate=gs,
                 controller=self._controllers[PORTS[0]],
@@ -353,8 +405,10 @@ class MeleeOrchestrator:
                 # there; _park_idle clears the leftover tokens so it can't
                 # happen again.
                 if gs.frame % 30 == 0:
-                    log.info("STAGE_SELECT with no match — tapping B to back out "
-                             "(frame=%s)", gs.frame)
+                    log.info(
+                        "STAGE_SELECT with no match — tapping B to back out (frame=%s)",
+                        gs.frame,
+                    )
                 for ctrl in self._controllers.values():
                     self._tap_b(ctrl)
                 return
@@ -378,19 +432,22 @@ class MeleeOrchestrator:
                 return
 
             if self._pending_players is not None:
-                self._active_players  = self._pending_players
+                self._active_players = self._pending_players
                 self._pending_players = None
-                self.state.phase      = Phase.IN_GAME
+                self.state.phase = Phase.IN_GAME
                 asyncio.create_task(self._decision_loop())
 
             self._update_scores(gs)
 
             if self._active_players:
-                alive = [p for p in self._active_players
-                         if gs.players.get(p.port) and gs.players[p.port].stock > 0]
+                alive = [
+                    p
+                    for p in self._active_players
+                    if gs.players.get(p.port) and gs.players[p.port].stock > 0
+                ]
                 if len(alive) == 1 and self.state.phase == Phase.IN_GAME:
                     self.state.winner = alive[0].name
-                    self.state.phase  = Phase.POSTGAME
+                    self.state.phase = Phase.POSTGAME
 
             async with self._lock:
                 actions = dict(self._actions)
@@ -412,6 +469,10 @@ class MeleeOrchestrator:
                 autostart=False,
             )
             self._active_players = None
+            # Match over - kill the subprocess workers so they aren't sitting
+            # idle holding memory between matches. They are respawned fresh in
+            # the next queue_match().
+            self._teardown_workers()
 
     def _update_scores(self, gs: melee.GameState):
         if not self._active_players:
@@ -423,15 +484,19 @@ class MeleeOrchestrator:
             score = self.state.scores.get(p.port)
             if score is None:
                 continue
-            score.stock   = int(player_gs.stock)
+            score.stock = int(player_gs.stock)
             score.percent = round(float(player_gs.percent), 1)
-            score.action  = getattr(player_gs.action, "name", str(player_gs.action))
+            score.action = getattr(player_gs.action, "name", str(player_gs.action))
 
     async def _apply(self, ctrl: melee.Controller, action: Optional[dict]):
         if action is None:
             ctrl.release_all()
             return
-        ctrl.tilt_analog(melee.Button.BUTTON_MAIN, action.get("stick_x", 0.5), action.get("stick_y", 0.5))
+        ctrl.tilt_analog(
+            melee.Button.BUTTON_MAIN,
+            action.get("stick_x", 0.5),
+            action.get("stick_y", 0.5),
+        )
         for btn, pressed in action.get("buttons", {}).items():
             try:
                 b = melee.Button[btn]
@@ -440,26 +505,74 @@ class MeleeOrchestrator:
                 pass
 
     async def _decision_loop(self):
-        """Runs for the duration of one match, fetching bot actions off the hot path."""
+        """Runs for the duration of one match, fetching bot actions off the hot path.
+
+        Each iteration builds one frame snapshot from the live GameState and
+        dispatches it to all four per-port BotWorker subprocesses in parallel
+        (each runs synchronously in its own thread via asyncio.to_thread, with
+        the worker's internal 10ms deadline bounding the wait). If a worker
+        has died (crash, or K consecutive deadline misses), the port falls
+        back to its trusted in-process default bot for the remainder of the
+        match. Results land in self._actions under the lock; the 60fps frame
+        loop reads them back and applies them to the controllers.
+        """
         while self.state.phase == Phase.IN_GAME and self._active_players:
             gs = self._latest_gs
             if gs is None or gs.menu_state != melee.Menu.IN_GAME:
                 await asyncio.sleep(0.016)
                 continue
-            for p in self._active_players:
-                loader = self._bot_loaders.get(p.port)
-                if loader is None:
-                    continue
-                bot = loader.get_active_bot()
-                if bot is None:
-                    continue
-                try:
-                    action = await asyncio.wait_for(
-                        asyncio.to_thread(bot.act, gs, p.port), timeout=0.05)
-                    async with self._lock:
-                        self._actions[p.port] = action
-                except asyncio.TimeoutError:
-                    pass
-                except Exception as exc:
-                    log.error("Bot port %d: %s", p.port, exc)
+            snap = frame_snapshot(gs, gs.frame)
+            ports = [p.port for p in self._active_players]
+            coros = [
+                asyncio.to_thread(self._port_action_sync, port, snap, gs)
+                for port in ports
+            ]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            async with self._lock:
+                for port, result in zip(ports, results):
+                    if isinstance(result, Exception):
+                        log.error("Port %d decision error: %s", port, result)
+                        continue
+                    self._actions[port] = result
             await asyncio.sleep(0.016)
+
+    def _port_action_sync(self, port: int, snap: dict, gs) -> Optional[dict]:
+        """Synchronous per-port decision: subprocess worker first, in-process
+        default-bot fallback if the worker is dead. Runs in a worker thread
+        via asyncio.to_thread so the 10ms+ deadline on worker.act() cannot
+        stall the event loop.
+        """
+        worker = self._bot_workers.get(port)
+        if worker is None or worker.is_dead:
+            return self._fallback_action_sync(port, gs)
+        action = worker.act(snap, port)
+        # The worker may have died on this very call (crash / K-th miss).
+        # Fall back immediately so the player keeps a working character.
+        if worker.is_dead:
+            return self._fallback_action_sync(port, gs)
+        return action
+
+    def _fallback_action_sync(self, port: int, gs) -> Optional[dict]:
+        """Trusted in-process default bot for this port's character."""
+        loader = self._fallback_loaders.get(port)
+        if loader is None:
+            return None
+        bot = loader.get_active_bot()
+        if bot is None:
+            return None
+        try:
+            return clamp_action(bot.act(gs, port))
+        except Exception as exc:
+            log.error("Fallback bot port %d: %s", port, exc)
+            return None
+
+    def _teardown_workers(self):
+        """Kill and forget all subprocess bot workers."""
+        if not self._bot_workers:
+            return
+        for worker in self._bot_workers.values():
+            try:
+                worker.close()
+            except Exception:
+                pass
+        self._bot_workers = {}

@@ -1,50 +1,129 @@
 # Improving Bot Isolation
 
-Status: proposal. Not yet implemented. The current defense is `core/bot_validator.py`
-(static AST checks) enforced at `core/bot_loader.py` (the single execution
-choke point). This document describes the stronger, runtime isolation we should
-build next.
+Status: **implemented (v1)**. The subprocess sandbox (`core/bot_process.py` +
+`core/bot_worker.py` + `core/frame.py`) is live. The static AST validator
+(`core/bot_validator.py`) stays as the cheap pre-flight check at `/api/start`
+and inside `BotLoader.load()`; it is defense-in-depth, not the boundary. The
+items still outstanding are tagged **[TODO]** inline below.
 
 ---
 
-## Why the static validator is not enough
+## What v1 implements (the security and availability boundary)
 
-User bots run **in-process** in the game loop. `BotLoader._import` calls
-`spec.loader.exec_module(mod)`, so uploaded code executes with the full
-privileges of the server process: the same filesystem access, the same network,
-the same ability to read the WireGuard config, or the Melee
-ISO, and the same ability to kill the match.
+- **One subprocess per port** (`core/bot_process.BotWorker`), spawned in
+  `MeleeOrchestrator.queue_match` and torn down on match end / abort. Warm
+  across frames (kept alive for the duration of a match).
+- **JSON over stdio IPC** (not `multiprocessing.Pipe`). Pickle is itself an
+  execution risk and would couple the child to the parent's object graph;
+  JSON is debuggable (`echo '{"frame":1,...}' | python core/bot_worker.py
+  bot.py`) and language-agnostic for the future. The payload is a plain-dict
+  snapshot of only the documented bot-interface fields (`position.x/y`,
+  `stock`, `percent`, `action`, `character`, `facing`) - exactly the surface
+  `core/test_bot.py` already mocks with `types.SimpleNamespace`, so every
+  existing bot and the test harness keep working unchanged.
+- **`setrlimit` in the child before importing the bot** (`core/bot_worker._apply_limits`):
+  `RLIMIT_CPU=3s`, `RLIMIT_FSIZE=0`, `RLIMIT_NOFILE=16`, `RLIMIT_CORE=0`,
+  `RLIMIT_AS=256MB` (best-effort on macOS - see the inline notes). This is
+  what defeats `while True`, `[0]*10**10`, file writes, and fd exhaustion.
+- **Scrubbed environment + `cwd=scratch`** (`core/bot_process._scrub_env`):
+  the child inherits only `PATH`, `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`,
+  `TZ`. Twitch keys, WireGuard config env, OLLAMA URLs, and everything else
+  the server might have in its environment are dropped.
+- **Per-frame deadline (10ms)** enforced by the *parent* via
+  `select.select([fd], [], [], deadline)`. A stuck bot can never stall the
+  60fps loop. On miss: neutral input (`release_all`) for that frame. After
+  `max_misses` (3) consecutive misses, the worker is killed and marked dead.
+- **Error-flag protocol**: the worker reports `{"frame":N,"action":null,
+  "error":true}` when `bot.act()` raises, distinguishing a crash from a
+  deliberate `return None` (release_all). Consecutive errors count toward
+  the same dead-worker threshold as deadline misses, so a perpetually
+  crashing bot falls back instead of silently standing still.
+- **Trusted in-process fallback** (`core/roster.default_bot_path` +
+  `MeleeOrchestrator._fallback_action_sync`): when a worker dies, that
+  port's `core/bots/<char>.py` (or `generic.py`) is loaded once per match
+  via `BotLoader` and called in-process with the live `GameState`. Trusted
+  code we shipped, no sandbox needed; the character keeps playing simple AI
+  for the rest of the match.
+- **Hot-reload via parent-side mtime check + respawn**: editing a bot file
+  on disk causes the next `BotWorker.act()` call to kill and respawn the
+  child. The first post-respawn frame will likely miss the deadline (cold
+  Python startup); subsequent frames are back to normal. The respawn itself
+  is bounded by the same `_COLD_START_BUDGET_S` grace as the initial spawn
+  (see below).
+- **Cold-start grace**: until the worker produces its first successful
+  response, `_recv` is given `_COLD_START_BUDGET_S = 2s` instead of the
+  tight 10ms deadline. Python subprocess startup + `import melee` is
+  ~130ms on this Mac, which would otherwise trip `max_misses` before the
+  bot ever had a chance. In production the worker is spawned at
+  `queue_match` time (during CSS navigation) and the first `act()` happens
+  seconds later when `IN_GAME` starts, so the grace rarely matters - but
+  it makes hot-reload respawns and tight unit tests robust.
+- **Action clamping** (`core/frame.clamp_action`): every action coming back
+  from a worker is type-checked and clamped (sticks to `[0.0, 1.0]`,
+  buttons normalized to exactly the seven required keys with bool values)
+  before it reaches libmelee via `_apply`. A malformed return can never
+  reach the controller.
+- **Frame-id matching in `_recv`**: stale responses from a previous frame
+  are drained, not applied. If a slow child finally replies after we
+  already timed out and sent the next frame, we never apply a stale
+  action.
 
-The AST validator (`core/bot_validator.py`) is a **denylist**, and a denylist of
-a Turing-complete language is a losing game:
+## What v1 does NOT do yet (TODO)
+
+These are layered on top of the v1 boundary without rearchitecting:
+
+- **Network isolation.** `RLIMIT` cannot block sockets. The next layer is
+  either a macOS `sandbox-exec` profile that denies `network*` and file
+  writes outside scratch, or (preferred long-term) running the workers in a
+  `--network none` container with read-only rootfs, `--memory`, `--cpus`,
+  and a non-root user.
+- **Read-isolation.** `RLIMIT_FSIZE=0` blocks the *write* (`write(2)` raises
+  `EFBIG`), but `open(...,"w")` itself can create an empty file in any
+  directory the parent process can write (e.g. `/tmp`). For full read
+  isolation we'd need a dedicated low-privilege macOS user (`os.setuid` in
+  the child) with no read access to the repo secrets, or the same container
+  / sandbox profile as above. The current set is the right v1: it defeats
+  RCE-via-reflection (separate address space) and CPU/mem/file-write DoS,
+  which is what the AST validator could never do.
+- **Dedicated low-priv user.** Skipped for v1 (a `setuid` helper or
+  root-launched parent is a big lift for a home setup).
+
+---
+
+## Why the static validator is not enough (still true - it stays as pre-flight)
+
+User bots run **out of process** now (in `core/bot_worker.py`), so the
+in-process RCE-via-reflection risk is gone. But the validator was already
+not enough even before that, for the reasons below, and stays as a fast
+fail-fast check at upload time so we don't bother spawning a worker for
+obviously bad code:
 
 - It cannot enumerate every reflection path. We already closed one
   (`gi_frame.f_builtins["__import__"]`); the general class of
   "reach a frame, reach builtins, subscript your way out" keeps producing new
   variants (coroutine frames, traceback frames, C-level helpers exposed by
   future stdlib versions).
-- It cannot reason about **runtime behavior at all**. It is a static check, so
-  it is blind to:
-  - **Infinite loops / CPU exhaustion** — `while True: pass` inside `act()`
-    stalls the 60fps loop thread. Per the game-loop rules, `act()` runs every
-    frame; one slow bot degrades or freezes every match.
-  - **Memory bombs** — `[0] * 10**10` OOMs the whole server.
-  - **Blocking calls** — a bot that blocks (even accidentally) hangs the loop.
+- It cannot reason about **runtime behavior at all**. It is a static check,
+  so it is blind to:
+  - **Infinite loops / CPU exhaustion** - `while True: pass` inside `act()`
+    stalls the decision thread. The per-frame parent deadline now bounds
+    this; the validator alone couldn't.
+  - **Memory bombs** - `[0] * 10**10` no longer OOMs the server; the
+    subprocess's `RLIMIT_AS` (where macOS lets us set it) caps it, and even
+    without that the parent just kills the child after K misses.
+  - **Blocking calls** - a bot that blocks (even accidentally) is now
+    bounded by the 10ms parent deadline.
 
-Static validation should stay as cheap, fail-fast defense-in-depth. But the
-**security and availability boundary must be a runtime sandbox**, because that
-is the only thing that can bound what code *does*, not just what it *says*.
+The **security and availability boundary is the runtime sandbox** because
+that is the only thing that can bound what code *does*, not just what it
+*says*. The static validator catches the obvious cases early; the sandbox
+catches everything the validator can't.
 
 ---
 
 ## Recommended approach: run each bot in a locked-down subprocess
 
-Move bot execution out of the server process entirely. Each bot runs in its own
-child process with dropped privileges and hard resource limits. The parent
-(orchestrator) speaks to it over a pipe: it sends a serialized `GameState`
-snapshot each frame and receives an action dict (or a timeout/crash signal)
-back. Nothing the bot does can touch the parent's memory, and if it misbehaves
-the parent simply kills it and falls back to the LLM / neutral input.
+This is now implemented. The description below stays as the design record.
 
 ```
 [orchestrator, 60fps loop]                 [bot worker process, per port]
@@ -167,16 +246,22 @@ running the workers in a `--network none` container.
 
 ## Rollout sketch
 
-1. Define the frame snapshot + action schema (plain dicts) and a strict action
-   validator/clamp in the parent.
-2. Write the worker entry point: `setrlimit`, scrub env, `chdir` to scratch,
-   import the (already statically validated) bot, then the read-eval-reply loop.
-3. Switch `BotLoader` / the orchestrator to spawn a worker per port instead of
-   calling `bot.act()` in-process; enforce the per-frame `poll` deadline and the
-   consecutive-miss fallback.
-4. Add network isolation (sandbox profile or container).
-5. Keep `core/bot_validator.py` as the fast pre-flight check — reject obviously
-   bad uploads before we bother spawning a worker.
+1. **[DONE]** Define the frame snapshot + action schema (plain dicts) and a strict
+   action validator/clamp in the parent. (`core/frame.py`.)
+2. **[DONE]** Write the worker entry point: `setrlimit`, scrub env (the env scrub
+   is at Popen time in the parent), `chdir` to scratch (also at Popen time),
+   import the (already statically validated) bot, then the read-eval-reply
+   loop. (`core/bot_worker.py`.)
+3. **[DONE]** Switch the orchestrator to spawn a worker per port instead of calling
+   `bot.act()` in-process; enforce the per-frame `poll` deadline and the
+   consecutive-miss fallback to the trusted in-process default bot.
+   (`core/bot_process.BotWorker`, `MeleeOrchestrator.queue_match` +
+   `_decision_loop`.)
+4. **[TODO]** Add network isolation (sandbox profile or container).
+5. **[DONE]** Keep `core/bot_validator.py` as the fast pre-flight check - reject
+   obviously bad uploads before we bother spawning a worker. (Still called in
+   `frontend/app.py:_resolve_bot_path` for pasted code and in
+   `core/bot_loader.py:load()` for defense-in-depth.)
 
-Keep the static validator; it is cheap and catches the obvious cases early. The
-subprocess sandbox is what makes running untrusted bot code actually safe.
+The static validator stays; it is cheap and catches the obvious cases early.
+The subprocess sandbox is what makes running untrusted bot code actually safe.
