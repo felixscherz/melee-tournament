@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Smash Tournament — Lobby</title>
+  <title>Smash Tournament</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; min-height: 100vh; }
@@ -23,158 +23,111 @@
     nav a:hover { background: #35355a; color: #c0c0e0; }
     nav a.active { background: #e94560; color: #fff; }
 
-    .stream-wrap { max-width: 1100px; margin: 1.5rem auto 0; padding: 0 1.5rem; }
-    .stream-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; }
-    .stream-head h2 { margin-bottom: 0; }
-    #lobby_twitch { width: 100%; aspect-ratio: 16/9; background: #000; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; }
-    #lobby_twitch iframe { width: 100%; height: 100%; border: 0; display: block; }
+    .hero { text-align: center; padding: 2.5rem 1.5rem 1rem; }
+    .hero h2 { font-size: 1.4rem; color: #6060a0; letter-spacing: 4px; margin-bottom: 0.5rem; }
+    .hero p { font-size: 0.85rem; color: #505070; letter-spacing: 1px; }
 
-    main { max-width: 1100px; margin: 2rem auto; padding: 0 1.5rem; }
+    main { max-width: 900px; margin: 0 auto; padding: 0 1.5rem 2rem; }
 
-    h2 { text-align: center; font-size: 1rem; color: #6060a0; letter-spacing: 2px; margin-bottom: 1.5rem; }
-
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
-
-    .card {
-      background: #1a1a2e;
-      border: 1px solid #2a2a4a;
-      border-radius: 8px;
-      padding: 1.4rem;
-      display: flex; flex-direction: column; gap: 0.9rem;
-      transition: border-color 0.2s;
+    h3.section-head {
+      text-align: center; font-size: 0.9rem; color: #6060a0; letter-spacing: 2px;
+      margin: 2rem 0 1rem;
     }
-    .card:focus-within { border-color: #e94560; }
 
-    .card-header { display: flex; align-items: center; gap: 0.6rem; }
-    .port-badge {
-      width: 28px; height: 28px; border-radius: 50%;
+    /* Team join grid */
+    .team-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+    .team-card {
+      background: #1a1a2e; border: 2px solid #2a2a4a; border-radius: 10px;
+      padding: 1.3rem; cursor: pointer; transition: border-color 0.2s, transform 0.1s;
+      text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 0.6rem;
+    }
+    .team-card:hover { border-color: #e94560; transform: translateY(-2px); }
+    .team-card .tc-head { display: flex; align-items: center; gap: 0.7rem; }
+    .team-badge {
+      width: 36px; height: 36px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 0.8rem; font-weight: bold; flex-shrink: 0;
+      font-size: 1rem; font-weight: bold; flex-shrink: 0;
     }
     .p1 { background: #4fc3f7; color: #000; }
     .p2 { background: #ef9a9a; color: #000; }
     .p3 { background: #a5d6a7; color: #000; }
     .p4 { background: #ffe082; color: #000; }
-    .card-header span { font-size: 0.85rem; color: #9090b0; letter-spacing: 1px; }
+    .team-card .tc-name { font-size: 1rem; color: #e0e0e0; letter-spacing: 1px; }
+    .team-card .tc-info { font-size: 0.75rem; color: #6060a0; line-height: 1.5; }
+    .team-card .tc-char { color: #9090b0; }
+    .team-card .tc-meta { display: flex; gap: 0.8rem; font-size: 0.68rem; color: #505070; }
+    .team-card .tc-status { font-size: 0.68rem; letter-spacing: 1px; padding: 0.15rem 0.5rem; border-radius: 8px; display: inline-block; margin-top: 0.2rem; }
+    .tc-status.ready { color: #81c784; border: 1px solid #2a5a2a; background: #1a2a1a; }
+    .tc-status.pending { color: #6060a0; border: 1px solid #2a2a4a; }
+    .tc-status.nocap { color: #e94560; border: 1px solid #3a1a24; }
 
-    label { font-size: 0.72rem; color: #6060a0; letter-spacing: 1px; display: block; margin-bottom: 0.25rem; }
-    input[type=text], select {
-      width: 100%; padding: 0.5rem 0.7rem;
-      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
-      color: #e0e0e0; font-family: inherit; font-size: 0.85rem;
-      outline: none; transition: border-color 0.2s;
+    /* Match control */
+    .match-card {
+      background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+      padding: 1.5rem; text-align: center;
     }
-    input[type=text]:focus, select:focus { border-color: #e94560; }
+    .phase-row { display: flex; align-items: center; justify-content: center; gap: 0.6rem; font-size: 0.85rem; margin-bottom: 1rem; }
+    .phase-label { color: #6060a0; letter-spacing: 1px; }
+    #phase-pill {
+      padding: 0.25rem 0.9rem; border-radius: 999px; font-weight: bold; letter-spacing: 1px;
+      background: #2a2a4a; color: #9090c0; text-transform: uppercase; font-size: 0.78rem;
+    }
+    #phase-pill.idle     { background: #223322; color: #81c784; }
+    #phase-pill.starting { background: #33321a; color: #ffe082; }
+    #phase-pill.in_game  { background: #3a1a24; color: #e94560; }
+    #phase-pill.postgame { background: #1a2a3a; color: #4fc3f7; }
 
-    .char-info {
-      font-size: 0.72rem; color: #5050a0; min-height: 1rem;
-      font-style: italic;
-    }
-
-    details.bot-code > summary {
-      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
-      list-style: none; user-select: none; padding: 0.2rem 0;
-    }
-    details.bot-code > summary::before { content: '▸ '; }
-    details.bot-code[open] > summary::before { content: '▾ '; }
-    textarea {
-      width: 100%; margin-top: 0.5rem; padding: 0.5rem 0.7rem; min-height: 140px;
-      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
-      color: #cfe8cf; font-family: 'Courier New', monospace; font-size: 0.75rem;
-      line-height: 1.4; resize: vertical; outline: none; tab-size: 4;
-      white-space: pre; overflow-wrap: normal; overflow-x: auto;
-    }
-    textarea:focus { border-color: #e94560; }
-    .code-status { font-size: 0.68rem; margin-top: 0.3rem; min-height: 0.9rem; }
-    .code-status.ok  { color: #81c784; }
-    .code-status.err { color: #e94560; }
-
-    details.bot-prompt > summary {
-      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
-      list-style: none; user-select: none; padding: 0.2rem 0;
-    }
-    details.bot-prompt > summary::before { content: '▸ '; }
-    details.bot-prompt[open] > summary::before { content: '▾ '; }
-    details.bot-prompt textarea {
-      min-height: 60px; font-size: 0.8rem; font-family: inherit; line-height: 1.4;
-      white-space: pre-wrap; overflow-wrap: break-word;
-    }
-    .gen-btn {
-      padding: 0.4rem 1rem; background: #2a5a2a; color: #cfe8cf; border: none;
-      border-radius: 4px; font-family: inherit; font-size: 0.72rem; cursor: pointer;
-      letter-spacing: 1px; margin-top: 0.4rem; transition: background 0.2s;
-    }
-    .gen-btn:hover { background: #3a7a3a; }
-    .gen-btn:disabled { background: #333; color: #666; cursor: wait; }
-    .gen-status { font-size: 0.68rem; margin-top: 0.3rem; min-height: 0.9rem; }
-    .gen-status.ok  { color: #81c784; }
-    .gen-status.err { color: #e94560; }
-    .gen-status.info { color: #6060a0; }
-    .spinner {
-      display: inline-block; width: 10px; height: 10px;
-      border: 2px solid #333; border-top-color: #e94560; border-radius: 50%;
-      animation: spin 0.8s linear infinite; vertical-align: middle;
-      margin-right: 0.3rem;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .instructions {
-      margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #2a2a4a;
-    }
-    .instructions h3 { color: #6060a0; letter-spacing: 2px; font-size: 0.9rem; margin-bottom: 0.8rem; }
-    .instructions p { font-size: 0.8rem; color: #9090b0; line-height: 1.6; margin-bottom: 0.8rem; }
-    .instructions ul { margin: 0 0 0.8rem 1.2rem; font-size: 0.8rem; color: #9090b0; line-height: 1.6; }
-    .instructions code { color: #cfe8cf; background: #11112a; padding: 0.05rem 0.3rem; border-radius: 3px; }
-    .instructions pre {
-      background: #11112a; border: 1px solid #2a2a4a; border-radius: 6px;
-      padding: 1rem; overflow-x: auto; font-size: 0.74rem; line-height: 1.5;
-      color: #cfe8cf; margin-bottom: 1.2rem;
-    }
-    .instructions .example-tabs { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
-    .instructions .example-tabs button {
-      background: #2a2a4a; color: #9090c0; border: none; border-radius: 4px;
-      padding: 0.35rem 1rem; font-family: inherit; font-size: 0.72rem; cursor: pointer;
-    }
-    .instructions .example-tabs button.active { background: #e94560; color: #fff; }
-
-    .controls {
-      position: sticky; top: 0; z-index: 30;
-      background: #14142a; border-bottom: 1px solid #2a2a4a;
-      padding: 0.55rem 1.5rem;
-      display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
-    }
-    .port-chips { display: flex; gap: 0.4rem; }
-    .chip {
+    .ready-bar { display: flex; justify-content: center; gap: 0.5rem; margin-bottom: 1rem; }
+    .ready-chip {
       font-size: 0.68rem; padding: 0.22rem 0.55rem; border-radius: 12px;
       border: 1px solid #2a2a4a; background: #11112a; color: #9090b0;
       display: flex; align-items: center; gap: 0.35rem; letter-spacing: 1px;
-      white-space: nowrap;
     }
-    .chip strong { font-size: 0.72rem; }
-    .chip.ready { color: #81c784; border-color: #2a5a2a; }
-    .chip.gen   { color: #ffe082; border-color: #5a5a2a; }
-    .chip .spinner { width: 8px; height: 8px; border-width: 1.5px; margin: 0; }
-    .ctl-spacer { margin-left: auto; }
-    #reset-btn {
-      display: none; padding: 0.4rem 1rem; background: #2a2a4a; color: #9090c0;
-      border: none; border-radius: 4px; font-family: inherit; font-size: 0.7rem;
-      cursor: pointer; letter-spacing: 1px;
-    }
-    #reset-btn:hover { background: #35355a; }
-    button#start-btn {
-      padding: 0.6rem 2.4rem;
-      background: #e94560; color: #fff; border: none; border-radius: 6px;
-      font-family: inherit; font-size: 0.9rem; font-weight: bold; letter-spacing: 2px;
-      cursor: pointer; transition: background 0.2s;
-    }
-    button#start-btn:hover { background: #c73352; }
-    button#start-btn:disabled { background: #444; cursor: not-allowed; }
+    .ready-chip.on { color: #81c784; border-color: #2a5a2a; background: #1a2a1a; }
+    .ready-chip strong { font-size: 0.72rem; }
 
-    #status { font-size: 0.78rem; color: #6060a0; min-height: 1.1rem; flex: 1 1 100%; }
+    .btn {
+      padding: 0.7rem 2.4rem; border: none; border-radius: 6px;
+      font-family: inherit; font-size: 0.9rem; font-weight: bold; letter-spacing: 2px;
+      cursor: pointer; transition: background 0.2s, opacity 0.2s;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-start { background: #e94560; color: #fff; }
+    .btn-start:hover:not(:disabled) { background: #c73352; }
+    .btn-stop { background: #2a2a4a; color: #9090c0; font-size: 0.75rem; padding: 0.5rem 1.5rem; }
+    .btn-stop:hover:not(:disabled) { background: #35355a; }
+    .btn-reset { background: #3a1a24; color: #e94560; font-size: 0.72rem; padding: 0.45rem 1.2rem; }
+    .btn-reset:hover:not(:disabled) { background: #4a2a34; }
+
+    .btn-row { display: flex; justify-content: center; gap: 0.6rem; flex-wrap: wrap; }
+    #status { font-size: 0.78rem; color: #6060a0; min-height: 1.1rem; margin-top: 0.8rem; }
     #status.ok  { color: #81c784; }
     #status.err { color: #e94560; }
 
-    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+    /* Stream */
+    .stream-wrap { max-width: 900px; margin: 1rem auto 0; padding: 0 1.5rem; }
+    .stream-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+    .stream-head h3 { margin: 0; }
+    #lobby_twitch { width: 100%; aspect-ratio: 16/9; background: #000; border: 1px solid #2a2a4a; border-radius: 8px; overflow: hidden; }
+    #lobby_twitch iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+    /* How it works */
+    .howto { max-width: 700px; margin: 2rem auto 0; padding: 0 1.5rem; }
+    .howto ol { list-style: none; counter-reset: step; padding: 0; }
+    .howto li {
+      counter-increment: step; padding: 0.6rem 0 0.6rem 2.5rem; position: relative;
+      font-size: 0.8rem; color: #9090b0; line-height: 1.5;
+    }
+    .howto li::before {
+      content: counter(step); position: absolute; left: 0; top: 0.5rem;
+      width: 1.6rem; height: 1.6rem; border-radius: 50%; background: #e94560; color: #fff;
+      display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold;
+    }
+    .howto code { color: #cfe8cf; background: #11112a; padding: 0.05rem 0.3rem; border-radius: 3px; }
+
+    @media (max-width: 640px) {
+      .team-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -187,124 +140,58 @@
   </nav>
 </header>
 
-<div class="controls" id="controls">
-  <div class="port-chips" id="port-chips"></div>
-  <div class="ctl-spacer"></div>
-  <button id="reset-btn" onclick="resetGame()">FORCE RESET</button>
-  <button id="start-btn" onclick="startGame()">START MATCH</button>
-  <div id="status"></div>
+<div class="hero">
+  <h2>4 TEAMS. 4 BOTS. 1 WINNER.</h2>
+  <p>Join a team, pitch your strategy, and let the AI build your fighter.</p>
 </div>
+
+<main>
+  <h3 class="section-head">JOIN A TEAM</h3>
+  <div class="team-grid" id="team-grid">
+    <!-- rendered by JS -->
+  </div>
+
+  <h3 class="section-head">MATCH</h3>
+  <div class="match-card">
+    <div class="phase-row">
+      <span class="phase-label">PHASE</span>
+      <span id="phase-pill" class="idle">idle</span>
+    </div>
+    <div class="ready-bar" id="ready-bar"></div>
+    <div class="btn-row">
+      <button class="btn btn-start" id="start-btn" onclick="startGame()" disabled>START MATCH</button>
+      <button class="btn btn-stop" id="stop-btn" onclick="stopGame()" style="display:none">END MATCH</button>
+      <button class="btn btn-reset" id="reset-btn" onclick="resetTeams()">RESET TEAMS</button>
+    </div>
+    <div id="status"></div>
+  </div>
+</main>
 
 <div class="stream-wrap">
   <div class="stream-head">
-    <h2>LIVE STREAM</h2>
+    <h3 class="section-head" style="margin:0">LIVE STREAM</h3>
   </div>
   <div id="lobby_twitch"></div>
 </div>
 
-<main>
-  <h2>LOBBY — SELECT YOUR FIGHTERS</h2>
-  <div class="grid" id="player-grid">
-    {% for i in range(1, 5) %}
-    {% set colors = ['p1','p2','p3','p4'] %}
-    <div class="card">
-      <div class="card-header">
-        <div class="port-badge {{ colors[i-1] }}">P{{ i }}</div>
-        <span>PLAYER {{ i }}</span>
-      </div>
-      <div>
-        <label>NAME</label>
-        <input type="text" id="name-{{ i }}" placeholder="Player {{ i }}" maxlength="16"/>
-      </div>
-      <div>
-        <label>CHARACTER</label>
-        <select id="char-{{ i }}" onchange="updateInfo({{ i }})">
-          {% for key, label in characters.items() %}
-          <option value="{{ key }}" {% if loop.index == i %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <div class="char-info" id="info-{{ i }}"></div>
-      </div>
-      <details class="bot-code">
-        <summary>CUSTOM BOT CODE (optional — default AI used if blank)</summary>
-        <textarea id="code-{{ i }}" spellcheck="false"
-          placeholder="Paste a Python Bot class here. See the guide at the bottom of the page."
-          oninput="clearCodeStatus({{ i }})"></textarea>
-        <div class="code-status" id="code-status-{{ i }}"></div>
-      </details>
-      <details class="bot-prompt">
-        <summary>GENERATE BOT FROM PROMPT (optional)</summary>
-        <textarea id="prompt-{{ i }}" spellcheck="true"
-          placeholder="Describe how this bot should play, e.g. 'aggressive fox that shines and up-smashes, recovers with firefox when off-stage'"
-          oninput="clearGenStatus({{ i }})"></textarea>
-        <button class="gen-btn" id="gen-btn-{{ i }}" onclick="generateBot({{ i }})">GENERATE</button>
-        <div class="gen-status" id="gen-status-{{ i }}"></div>
-      </details>
-    </div>
-    {% endfor %}
-  </div>
-
-  <div id="obs-check" style="text-align:center; font-size:0.75rem; color:#6060a0; margin-top:1.5rem;">
-    Make sure OBS is streaming to Twitch before starting a match.
-  </div>
-
-  <section class="instructions">
-    <h3>HOW TO WRITE A BOT</h3>
-    <p>
-      There are three ways to control a player:
-    </p>
-    <ul>
-      <li><strong>Default AI</strong> — leave everything blank. A built-in bot plays the character.</li>
-      <li><strong>Custom code</strong> — paste a Python <code>Bot</code> class into the code box.</li>
-      <li><strong>Generate from prompt</strong> — describe how the bot should play in the prompt box and click GENERATE. An AI agent writes and tests the code for you. This takes 30s-5min.</li>
-    </ul>
-    <p>
-      If both custom code and a generated bot exist, the custom code takes priority.
-    <p>Your <code>act(gamestate, player_port)</code> must return a dict shaped like:</p>
-    <pre>{
-  "stick_x": 0.5,   # 0.0 = left, 1.0 = right, 0.5 = neutral
-  "stick_y": 0.5,   # 0.0 = down, 1.0 = up,    0.5 = neutral
-  "buttons": {
-    "BUTTON_A": False, "BUTTON_B": False,
-    "BUTTON_X": False, "BUTTON_Y": False,
-    "BUTTON_L": False, "BUTTON_R": False,
-    "BUTTON_Z": False,
-  },
-}</pre>
-    <p>Useful gamestate fields: <code>gamestate.players[port].position.x / .y</code>,
-      <code>.stock</code>, <code>.percent</code>, <code>.action</code>, <code>.character</code>.</p>
-
-    <h3>SAFETY RULES (enforced on submit)</h3>
-    <ul>
-      <li>Only <code>import melee</code> (plus <code>math</code>, <code>random</code>) is allowed — any other import is rejected.</li>
-      <li><code>eval</code>, <code>exec</code>, <code>compile</code>, <code>open</code>, <code>__import__</code> and similar are banned.</li>
-      <li>Dunder tricks like <code>().__class__.__bases__</code> are rejected.</li>
-      <li>A top-level <code>Bot</code> class with an <code>act</code> method is required.</li>
-    </ul>
-
-    <h3>EXAMPLES</h3>
-    <div class="example-tabs">
-      <button data-ex="generic" class="active" onclick="showExample('generic')">Generic (chase)</button>
-      <button data-ex="fox" onclick="showExample('fox')">Fox (up-smash)</button>
-      <button data-ex="falco" onclick="showExample('falco')">Falco (lasers)</button>
-    </div>
-    <pre id="example-code"></pre>
-    <p><button onclick="copyExample()"
-       style="background:#2a2a4a;color:#9090c0;border:none;border-radius:4px;padding:0.35rem 1rem;font-family:inherit;font-size:0.72rem;cursor:pointer;">
-       Copy example</button></p>
-  </section>
-</main>
+<div class="howto">
+  <h3 class="section-head">HOW IT WORKS</h3>
+  <ol>
+    <li>Click a team above to join. First person to claim it becomes the captain.</li>
+    <li>Everyone on the team adds strategy ideas (short prompts). The captain picks the character.</li>
+    <li>The captain clicks <strong>ASSEMBLE &amp; GENERATE</strong> to combine all ideas into one bot, or pastes custom code to override.</li>
+    <li>Captain hits <strong>READY</strong>. When all 4 teams are ready, someone presses <strong>START MATCH</strong> here.</li>
+    <li>Watch the carnage on the <a href="/watch" style="color:#e94560">watch page</a>. <code>/api/teams/reset</code> or the RESET TEAMS button starts a fresh round.</li>
+  </ol>
+</div>
 
 <script>
-// Live stream embed — OBS pushes directly to Twitch (no WebRTC/OME relay).
-// Dolphin/OBS run continuously, so the stream is available even before a
-// match starts.
 const twitchChannel = {{ twitch_channel|tojson }};
 const twitchParents = {{ twitch_parents|tojson }};
 const twitchEl = document.getElementById('lobby_twitch');
 
 function initTwitch() {
-  if (twitchEl.querySelector('iframe')) return;
+  if (twitchEl.querySelector('iframe') || !twitchChannel) return;
   const parents = twitchParents.map(p => 'parent=' + encodeURIComponent(p)).join('&');
   const iframe = document.createElement('iframe');
   iframe.src = `https://player.twitch.tv/?channel=${encodeURIComponent(twitchChannel)}&${parents}&muted=true&autoplay=true`;
@@ -314,334 +201,145 @@ function initTwitch() {
 }
 initTwitch();
 
-const charDescriptions = {
-  FOX:    "Pure aggression — chases and up-smashes relentlessly.",
-  MARTH:  "Spacing game — forward-smashes from tipper range.",
-  CPTFALCON: "Full-speed rush — grabs and aerials at close range.",
-  FALCO:  "Laser pressure — short-hop lasers then rushes in.",
-};
+let teamsData = [];
+let phase = 'idle';
 
-function updateInfo(port) {
-  const val = document.getElementById(`char-${port}`).value;
-  document.getElementById(`info-${port}`).textContent =
-    charDescriptions[val] || "Generic AI — chases the nearest opponent and attacks.";
+const statusEl = document.getElementById('status');
+function setStatus(msg, cls = '') {
+  statusEl.textContent = msg;
+  statusEl.className = cls;
 }
 
-// Init descriptions
-for (let i = 1; i <= 4; i++) updateInfo(i);
+function renderTeams(teams) {
+  teamsData = teams || [];
+  const grid = document.getElementById('team-grid');
+  grid.innerHTML = '';
+  for (const t of teamsData) {
+    const a = document.createElement('a');
+    a.href = `/team/${t.team_id}`;
+    a.className = 'team-card';
+    a.style.borderColor = t.ready ? '#2a5a2a' : '#2a2a4a';
 
-function clearCodeStatus(port) {
-  const el = document.getElementById(`code-status-${port}`);
-  el.textContent = ""; el.className = "code-status";
+    let statusCls = 'pending', statusTxt = 'waiting';
+    if (t.ready) { statusCls = 'ready'; statusTxt = 'READY'; }
+    else if (!t.has_captain) { statusCls = 'nocap'; statusTxt = 'NO CAPTAIN'; }
+
+    const capStr = t.captain_name ? `Captain: ${t.captain_name}` : 'No captain yet';
+    const genStr = t.generated_version ? `Bot v${t.generated_version}` : (t.has_code_override ? 'Custom code' : 'Default AI');
+
+    a.innerHTML = `
+      <div class="tc-head">
+        <div class="team-badge ${t.color}">T${t.team_id}</div>
+        <div class="tc-name">${esc(t.name)}</div>
+      </div>
+      <div class="tc-info">
+        <div class="tc-char">${esc(t.character_label)}</div>
+        <div>${capStr}</div>
+        <div>${t.contrib_count} contribution${t.contrib_count !== 1 ? 's' : ''} - ${genStr}</div>
+      </div>
+      <span class="tc-status ${statusCls}">${statusTxt}</span>
+    `;
+    grid.appendChild(a);
+  }
 }
 
-function clearGenStatus(port) {
-  const el = document.getElementById(`gen-status-${port}`);
-  el.textContent = ""; el.className = "gen-status";
-}
-
-// Track per-port bot generation so the sticky start bar can show live status
-// and disable START while any bot is still being generated.
-const portStates = { 1: 'none', 2: 'none', 3: 'none', 4: 'none' };
-
-function renderChips() {
-  const wrap = document.getElementById('port-chips');
-  wrap.innerHTML = '';
-  for (let i = 1; i <= 4; i++) {
-    const s = portStates[i];
+function renderReadyBar(teams) {
+  const bar = document.getElementById('ready-bar');
+  bar.innerHTML = '';
+  for (const t of teams) {
     const chip = document.createElement('div');
-    chip.className = 'chip ' + (s === 'ready' ? 'ready' : s === 'generating' ? 'gen' : '');
-    let label;
-    if (s === 'ready') label = '&#10003; ready';
-    else if (s === 'generating') label = 'gen\u2026 <span class="spinner"></span>';
-    else label = '\u2014';
-    chip.innerHTML = `<strong>P${i}</strong> <span>${label}</span>`;
-    wrap.appendChild(chip);
+    chip.className = 'ready-chip' + (t.ready ? ' on' : '');
+    chip.innerHTML = `<strong>T${t.team_id}</strong> ${t.ready ? '&#10003;' : '\u2014'}`;
+    bar.appendChild(chip);
   }
 }
-renderChips();
 
-function setPortState(port, state) {
-  portStates[port] = state;
-  renderChips();
-  updateStartState();
-}
-
-function updateStartState() {
-  const anyGen = Object.values(portStates).some(s => s === 'generating');
+function updateStartButton() {
   const startBtn = document.getElementById('start-btn');
-  // Don't re-enable if a game is already running (startGame() handles that).
-  if (!startBtn.dataset.busy) startBtn.disabled = anyGen;
+  const stopBtn = document.getElementById('stop-btn');
+  const allReady = teamsData.length === 4 && teamsData.every(t => t.ready);
+  const canStart = allReady && (phase === 'idle' || phase === 'postgame');
+  startBtn.disabled = !canStart;
+
+  if (phase !== 'idle' && phase !== 'postgame') {
+    stopBtn.style.display = 'inline-block';
+    startBtn.style.display = 'none';
+  } else {
+    stopBtn.style.display = 'none';
+    startBtn.style.display = 'inline-block';
+  }
 }
 
-async function generateBot(port) {
-  const btn = document.getElementById(`gen-btn-${port}`);
-  const status = document.getElementById(`gen-status-${port}`);
-  const promptEl = document.getElementById(`prompt-${port}`);
-  const charEl = document.getElementById(`char-${port}`);
-  const prompt = promptEl.value.trim();
+function renderPhase(p) {
+  phase = p;
+  const pill = document.getElementById('phase-pill');
+  pill.textContent = p;
+  pill.className = p;
+  updateStartButton();
+}
 
-  if (!prompt) {
-    status.textContent = "Enter a prompt first.";
-    status.className = "gen-status err";
-    return;
-  }
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
 
-  btn.disabled = true;
-  setPortState(port, 'generating');
-  status.innerHTML = '<span class="spinner"></span>Generating bot... (this can take a minute)';
-  status.className = "gen-status info";
+// ---- WebSocket: team summary feed ----
+function connectTeamsWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws/teams`);
+  ws.onmessage = e => {
+    const data = JSON.parse(e.data);
+    renderTeams(data.teams || []);
+    renderReadyBar(data.teams || []);
+    updateStartButton();
+  };
+  ws.onclose = () => setTimeout(connectTeamsWS, 2000);
+}
+connectTeamsWS();
 
+// ---- Phase polling ----
+async function refreshPhase() {
   try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        port: port,
-        character: charEl.value,
-        prompt: prompt,
-      }),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      status.textContent = `Generated bot ready (version ${data.version_id})`;
-      status.className = "gen-status ok";
-      setPortState(port, 'ready');
-    } else {
-      status.textContent = data.error || "Generation failed";
-      status.className = "gen-status err";
-      setPortState(port, 'none');
-    }
-  } catch (e) {
-    status.textContent = "Request failed: " + e.message;
-    status.className = "gen-status err";
-    setPortState(port, 'none');
-  } finally {
-    btn.disabled = false;
-  }
+    const s = await fetch('/api/state').then(r => r.json());
+    renderPhase(s.phase || 'idle');
+  } catch (e) {}
 }
+refreshPhase();
+setInterval(refreshPhase, 2000);
 
-// ---- Example bot snippets shown in the guide ----
-const EXAMPLES = {
-  generic: `import melee
-
-
-class Bot:
-    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
-        me = gamestate.players.get(player_port)
-        if me is None:
-            return None
-
-        # Find the nearest opponent by horizontal distance.
-        target, best = None, float("inf")
-        for port, p in gamestate.players.items():
-            if port == player_port:
-                continue
-            d = abs(p.position.x - me.position.x)
-            if d < best:
-                best, target = d, p
-        if target is None:
-            return None
-
-        dx = target.position.x - me.position.x
-        stick_x = 1.0 if dx > 2 else (0.0 if dx < -2 else 0.5)
-
-        return {
-            "stick_x": stick_x,
-            "stick_y": 0.5,
-            "buttons": {"BUTTON_A": abs(dx) < 12},
-        }`,
-  fox: `import melee
-
-
-class Bot:
-    """Fox — chase and up-smash."""
-    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
-        me = gamestate.players.get(player_port)
-        if me is None:
-            return None
-
-        target, best = None, float("inf")
-        for port, p in gamestate.players.items():
-            if port != player_port and abs(p.position.x - me.position.x) < best:
-                best, target = abs(p.position.x - me.position.x), p
-        if target is None:
-            return None
-
-        dx = target.position.x - me.position.x
-        dist = abs(dx)
-        stick_x = 1.0 if dx > 2 else (0.0 if dx < -2 else 0.5)
-        up_smash = dist < 10
-
-        return {
-            "stick_x": stick_x,
-            "stick_y": 1.0 if up_smash else 0.5,
-            "buttons": {"BUTTON_A": dist < 12},
-        }`,
-  falco: `import melee
-
-LASER_RANGE = (25, 55)
-
-
-class Bot:
-    """Falco — short-hop lasers, then rush in and shine."""
-    def __init__(self):
-        self._frame = 0
-
-    def act(self, gamestate: melee.GameState, player_port: int) -> dict | None:
-        self._frame += 1
-        me = gamestate.players.get(player_port)
-        if me is None:
-            return None
-
-        target, best = None, float("inf")
-        for port, p in gamestate.players.items():
-            if port != player_port and abs(p.position.x - me.position.x) < best:
-                best, target = abs(p.position.x - me.position.x), p
-        if target is None:
-            return None
-
-        dx = target.position.x - me.position.x
-        dist = abs(dx)
-        airborne = me.position.y > 1.0
-        in_range = LASER_RANGE[0] <= dist <= LASER_RANGE[1]
-
-        jump = in_range and not airborne and self._frame % 30 == 0
-        laser = airborne and in_range
-        shine = dist < 12
-        approach = dist > LASER_RANGE[1]
-
-        return {
-            "stick_x": (1.0 if dx > 0 else 0.0) if (approach or shine) else 0.5,
-            "stick_y": 0.0 if shine else 0.5,
-            "buttons": {
-                "BUTTON_A": shine,
-                "BUTTON_B": laser or shine,
-                "BUTTON_X": jump,
-            },
-        }`,
-};
-
-function showExample(name) {
-  document.getElementById('example-code').textContent = EXAMPLES[name];
-  document.querySelectorAll('.example-tabs button').forEach(b => {
-    b.classList.toggle('active', b.dataset.ex === name);
-  });
-}
-showExample('generic');
-
-async function copyExample() {
-  try { await navigator.clipboard.writeText(document.getElementById('example-code').textContent); }
-  catch (e) { /* clipboard blocked; ignore */ }
-}
-
-// Note: OBS stream health check removed (was OME WebSocket based).
-// With OBS pushing directly to Twitch there's no local endpoint to probe; the
-// operator just needs to hit "Start Streaming" in OBS before starting a match.
-
-// Show reset button if a game is already running
-async function checkPhase() {
-  const s = await fetch('/api/state').then(r => r.json());
-  if (s.phase !== 'idle') {
-    document.getElementById('reset-btn').style.display = 'block';
-    document.getElementById('status').textContent = `Game is in phase: ${s.phase}`;
-    document.getElementById('status').className = 'err';
-  }
-}
-checkPhase();
-
-// Repopulate the form with whatever was submitted for the last match, so
-// coming back to the lobby after a game doesn't wipe names/characters/bot code/prompt.
-async function restoreForm() {
-  try {
-    const { players } = await fetch('/api/last-form').then(r => r.json());
-    if (!players || !players.length) return;
-    for (const p of players) {
-      const name = document.getElementById(`name-${p.port}`);
-      const char = document.getElementById(`char-${p.port}`);
-      const code = document.getElementById(`code-${p.port}`);
-      const prompt = document.getElementById(`prompt-${p.port}`);
-      const genStatus = document.getElementById(`gen-status-${p.port}`);
-      if (name && p.name) name.value = p.name;
-      if (char && p.character) char.value = p.character;
-      if (code && p.code) {
-        code.value = p.code;
-        const details = code.closest('details');
-        if (details) details.open = true;
-      }
-      if (prompt && p.prompt) {
-        prompt.value = p.prompt;
-        const details = prompt.closest('details');
-        if (details) details.open = true;
-      }
-      if (genStatus && p.generated_version) {
-        genStatus.textContent = `Generated bot ready (version ${p.generated_version})`;
-        genStatus.className = "gen-status ok";
-        setPortState(p.port, 'ready');
-      }
-      if (typeof updateInfo === 'function') updateInfo(p.port);
-    }
-  } catch (e) { /* no prior form; leave defaults */ }
-}
-restoreForm();
-
-async function resetGame() {
-  await fetch('/api/stop', { method: 'POST' });
-  document.getElementById('reset-btn').style.display = 'none';
-  document.getElementById('status').textContent = 'Game reset — ready to start';
-  document.getElementById('status').className = 'ok';
-  document.getElementById('start-btn').disabled = false;
-}
-
+// ---- Match controls ----
 async function startGame() {
   const btn = document.getElementById('start-btn');
-  const status = document.getElementById('status');
   btn.disabled = true;
-  btn.dataset.busy = '1';
-  updateStartState();
-
-  const players = [1,2,3,4].map(i => ({
-    port: i,
-    name: document.getElementById(`name-${i}`).value.trim() || `Player ${i}`,
-    character: document.getElementById(`char-${i}`).value,
-    code: document.getElementById(`code-${i}`).value,
-    prompt: document.getElementById(`prompt-${i}`).value,
-  }));
-
-  status.textContent = "Starting match...";
-  status.className = "";
-
+  setStatus('Starting match...', '');
   try {
-    const res = await fetch('/api/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ players }),
-    });
+    const res = await fetch('/api/start', { method: 'POST' });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Error");
-
-    status.textContent = "Match queued — Dolphin is launching...";
-    status.className = "ok";
-
-    // Poll until the match is actually in-game, then update the status.
-    // Stay on the lobby page so viewers can keep watching the stream here.
-    const poll = setInterval(async () => {
-      const s = await fetch('/api/state').then(r => r.json());
-      if (s.phase === 'in_game' || s.phase === 'postgame') {
-        clearInterval(poll);
-        status.textContent = "Match in progress.";
-        status.className = "ok";
-      }
-    }, 1000);
-
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus('Match queued - Dolphin is launching...', 'ok');
   } catch (e) {
-    status.textContent = e.message;
-    status.className = "err";
+    setStatus(e.message, 'err');
     btn.disabled = false;
-  } finally {
-    delete btn.dataset.busy;
-    updateStartState();
   }
+}
+
+async function stopGame() {
+  setStatus('Ending match...', '');
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+    setStatus('Match ending - back to lobby shortly.', 'ok');
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+
+async function resetTeams() {
+  if (!confirm('Reset all teams? This clears captains, contributions, and ready state for a fresh round.')) return;
+  try {
+    const res = await fetch('/api/teams/reset', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus('Teams reset - fresh round ready.', 'ok');
+  } catch (e) { setStatus(e.message, 'err'); }
 }
 </script>
 </body>

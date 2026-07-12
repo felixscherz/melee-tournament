@@ -84,6 +84,25 @@ def get_generated_path(port: int) -> Optional[Path]:
     return None
 
 
+def assemble_prompt(contributions: list) -> str:
+    """Assemble a team's contributions into one merged prompt for the bot-writer.
+
+    Contributions are joined with author labels and a merge preamble that asks
+    the agent to reconcile conflicting ideas. Returns the assembled string.
+    """
+    if not contributions:
+        return ""
+    parts = [
+        "This bot's strategy was co-designed by a team. Each member contributed "
+        "a strategy idea below. Combine them into a single coherent bot. If two "
+        "ideas conflict, use your best judgement to pick the one that makes the "
+        "bot play better, and blend the rest.\n",
+    ]
+    for c in contributions:
+        parts.append(f"--- From {c.nickname} ---\n{c.text.strip()}\n")
+    return "\n".join(parts).strip()
+
+
 def _build_agent_message(
     character: str, port: int, prompt: str, output_path: Path
 ) -> str:

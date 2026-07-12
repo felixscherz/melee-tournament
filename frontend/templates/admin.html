@@ -26,6 +26,7 @@
     main { max-width: 640px; margin: 2rem auto; padding: 0 1.5rem; }
 
     h2 { text-align: center; font-size: 1rem; color: #6060a0; letter-spacing: 2px; margin-bottom: 1.5rem; }
+    h2.sub { font-size: 0.8rem; margin-top: 2rem; }
 
     .card {
       background: #1a1a2e;
@@ -46,6 +47,23 @@
     #phase-pill.in_game  { background: #3a1a24; color: #e94560; }
     #phase-pill.postgame { background: #1a2a3a; color: #4fc3f7; }
 
+    .team-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+    .team-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.78rem; }
+    .team-badge-sm {
+      width: 24px; height: 24px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; font-weight: bold; flex-shrink: 0;
+    }
+    .p1 { background: #4fc3f7; color: #000; }
+    .p2 { background: #ef9a9a; color: #000; }
+    .p3 { background: #a5d6a7; color: #000; }
+    .p4 { background: #ffe082; color: #000; }
+    .team-row .tname { flex: 1; color: #c0c0d0; }
+    .team-row .tchar { color: #9090b0; font-size: 0.72rem; }
+    .team-row .tready { font-size: 0.68rem; padding: 0.15rem 0.5rem; border-radius: 8px; }
+    .tready.on { color: #81c784; border: 1px solid #2a5a2a; }
+    .tready.off { color: #6060a0; border: 1px solid #2a2a4a; }
+
     .btn {
       width: 100%; padding: 0.85rem 1rem; margin-bottom: 0.9rem;
       border: none; border-radius: 6px;
@@ -55,8 +73,8 @@
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn-stop    { background: #e94560; color: #fff; }
     .btn-stop:hover:not(:disabled)    { background: #c73352; }
-    .btn-restart { background: #4f8fc3; color: #fff; }
-    .btn-restart:hover:not(:disabled) { background: #3a7098; }
+    .btn-reset   { background: #3a1a24; color: #e94560; }
+    .btn-reset:hover:not(:disabled)   { background: #4a2a34; }
 
     #status { text-align: center; margin-top: 0.4rem; font-size: 0.82rem; color: #6060a0; min-height: 1.2rem; }
     #status.ok  { color: #81c784; }
@@ -83,7 +101,13 @@
   </div>
 
   <div class="card">
+    <h2 class="sub" style="margin-top:0">TEAMS</h2>
+    <div class="team-rows" id="team-rows"></div>
+  </div>
+
+  <div class="card">
     <button class="btn btn-stop" id="stop-btn" onclick="stopMatch()">END MATCH &amp; RETURN TO LOBBY</button>
+    <button class="btn btn-reset" id="reset-btn" onclick="resetTeams()">RESET TEAMS</button>
   </div>
 
   <div id="status"></div>
@@ -93,6 +117,7 @@
 const statusEl  = document.getElementById('status');
 const pill      = document.getElementById('phase-pill');
 const stopBtn   = document.getElementById('stop-btn');
+const resetBtn  = document.getElementById('reset-btn');
 
 function setStatus(msg, cls = '') {
   statusEl.textContent = msg;
@@ -106,7 +131,8 @@ async function refreshPhase() {
     pill.textContent = phase;
     pill.className = phase;
     const idle = phase === 'idle';
-    stopBtn.disabled = idle;   // nothing to stop when idle
+    stopBtn.disabled = idle;
+    resetBtn.disabled = !idle && phase !== 'postgame';
   } catch (e) {
     pill.textContent = 'unreachable';
     pill.className = '';
@@ -115,19 +141,55 @@ async function refreshPhase() {
 refreshPhase();
 setInterval(refreshPhase, 2000);
 
+async function refreshTeams() {
+  try {
+    const data = await fetch('/api/teams').then(r => r.json());
+    const rows = document.getElementById('team-rows');
+    rows.innerHTML = '';
+    for (const t of data.teams || []) {
+      const row = document.createElement('div');
+      row.className = 'team-row';
+      row.innerHTML = `
+        <div class="team-badge-sm ${t.color}">T${t.team_id}</div>
+        <span class="tname">${esc(t.name)}</span>
+        <span class="tchar">${esc(t.character_label)}</span>
+        <span class="tready ${t.ready ? 'on' : 'off'}">${t.ready ? 'READY' : '—'}</span>
+      `;
+      rows.appendChild(row);
+    }
+  } catch (e) {}
+}
+refreshTeams();
+setInterval(refreshTeams, 3000);
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
 async function stopMatch() {
   stopBtn.disabled = true;
-  // Offline Melee has no quit, so ending a live match makes the bots clear the
-  // stage until the game ends on its own — that takes a few seconds.
-  setStatus('Ending match — bots are clearing the stage, back to the lobby shortly...', '');
+  setStatus('Ending match - bots are clearing the stage, back to the lobby shortly...', '');
   try {
     const res = await fetch('/api/stop', { method: 'POST' });
     if (!res.ok) throw new Error((await res.json()).detail || 'Error');
-    setStatus('Match ending — lobby will be ready once the game wraps up.', 'ok');
+    setStatus('Match ending - lobby will be ready once the game wraps up.', 'ok');
   } catch (e) {
     setStatus(e.message, 'err');
   }
   refreshPhase();
+}
+
+async function resetTeams() {
+  if (!confirm('Reset all teams? This clears captains, contributions, and ready state.')) return;
+  try {
+    const res = await fetch('/api/teams/reset', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus('Teams reset.', 'ok');
+    refreshTeams();
+  } catch (e) { setStatus(e.message, 'err'); }
 }
 </script>
 </body>

@@ -31,9 +31,10 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
                └──────────────┬──────────────┘
                               │
                        [FastAPI server]  :8080
+                       /lobby — team landing (join 1 of 4 teams)
+                       /team/{n} — team workspace (contributions, captain, generate)
                        /ws/gamestate — live push to browser
-                       /api/bot/upload — hot-reload bot scripts
-                       /api/prompt — override LLM prompt
+                       /ws/teams, /ws/team/{n} — team state push
                               │
                     ┌──────────┴──────────┐
                     │                     │
@@ -96,16 +97,13 @@ uv run main.py
 ```
 
 Dolphin boots the ISO and idles at the menus. Matches are queued via the
-lobby UI or the API — always exactly 4 players:
+lobby UI or the API. The lobby is team-based: 4 teams (one per port), each
+with a captain, a character pick, a stack of prompt contributions, and a
+ready toggle. `/api/start` is parameterless — it pulls all 4 teams' state
+from the `TeamRegistry` (`core/teams.py`) and requires all 4 to be ready:
 
 ```bash
-curl -X POST http://localhost:8080/api/start -H 'Content-Type: application/json' -d '{
-  "players": [
-    {"port": 1, "name": "A", "character": "FOX"},
-    {"port": 2, "name": "B", "character": "MARTH"},
-    {"port": 3, "name": "C", "character": "FALCON"},
-    {"port": 4, "name": "D", "character": "FALCO"}
-  ]}'
+curl -X POST http://localhost:8080/api/start
 ```
 
 The game loop picks the match up at CSS, locks in all four characters,
@@ -346,18 +344,36 @@ field surface as `core/test_bot.py`'s mocks) instead of the live
 and any prompt-generated bot) works without changes - that's the whole
 reason the snapshot is restricted to those fields.
 
-### Three ways to control a player
+### Three ways to control a player (per team)
 
-1. **Default AI** - leave the code box and prompt box blank. Uses the
-   character's built-in bot from `core/bots/`.
-2. **Custom code** - paste a Python `Bot` class into the lobby's code box.
-   Validated by `core/bot_validator.py` and written to `uploads/player{port}.py`.
-3. **Generate from prompt** - type a natural-language prompt in the lobby's
-   prompt box and click GENERATE. The backend spawns `opencode run` with the
-   `bot-writer` agent, which writes a versioned bot file to `generated/` and
-   tests it with `core/test_bot.py` until it passes.
+Each team (one per port) controls its fighter through its team workspace at
+`/team/{n}`. The captain is the one who commits the bot:
 
-Priority when starting a match: pasted code > generated bot > default bot.
+1. **Default AI** - no contributions, no code override, no generated bot. Uses
+   the character's built-in bot from `core/bots/`.
+2. **Generated from team prompt** - teammates add strategy contributions
+   (short natural-language ideas). The captain clicks ASSEMBLE & GENERATE,
+   which calls `assemble_prompt()` (`core/bot_generator.py`) to merge all
+   contributions into one prompt with a merge preamble, then spawns
+   `opencode run --auto --agent bot-writer`. The agent writes a versioned bot
+   file to `generated/` and tests it with `core/test_bot.py` until it passes.
+3. **Captain code override** - the captain pastes a Python `Bot` class into the
+   team workspace's code override box. Validated by `core/bot_validator.py`
+   and written to `uploads/player{port}.py` at match start.
+
+Priority when starting a match: captain code override > generated bot > default bot.
+
+### Team state (`core/teams.py`)
+
+The `TeamRegistry` singleton holds 4 `TeamState` objects (one per port/team).
+Each team has: a captain (claimed via a client-side localStorage nonce;
+instant takeover with UI confirm), a character pick, a stack of prompt
+contributions from any teammate, an optional code override, a generated bot
+version, and a ready toggle. State is persisted to
+`generated/teams.json` so a page refresh doesn't lose anything mid-session.
+`POST /api/teams/reset` clears everything for a fresh round (operator).
+WebSocket push-on-change: `/ws/teams` (landing page, 4-team summary) and
+`/ws/team/{n}` (team workspace, full team state).
 
 ### Generated bots (`generated/`)
 
@@ -367,9 +383,10 @@ Prompt-generated bots are written to `generated/` with versioned filenames
 bot. The directory is gitignored.
 
 The generation pipeline:
-- `POST /api/generate` (`frontend/app.py`) -> `core/bot_generator.py` spawns
-  `opencode run --auto --agent bot-writer` with the character, prompt, and
-  target file path.
+- `POST /api/team/{n}/generate` (`frontend/app.py`) assembles the team's
+  contributions via `assemble_prompt()`, then `core/bot_generator.py` spawns
+  `opencode run --auto --agent bot-writer` with the character, merged prompt,
+  and target file path.
 - The `bot-writer` agent (`.opencode/agents/bot-writer.md`) loads two skills
   (`.opencode/skills/libmelee-bot-interface/` and `melee-strategy/`), writes
   the bot, and iterates on `core/test_bot.py` until it passes.
@@ -488,14 +505,28 @@ would be missing). `main.py` injects the `MeleeOrchestrator` instance into
 `frontend.app._orchestrator` and runs uvicorn in the same event loop.
 
 Routes (`frontend/app.py`):
-- `GET /lobby` — pick 4 players/characters and start a match (`/` redirects here)
-- `GET /watch` — Twitch stream embed + live scores
-- `POST /api/start` — queue a match; body: `{"players": [{port, name, character, code?, prompt?} × 4]}`
-- `POST /api/stop` — reset app state
-- `POST /api/generate` — generate a bot from a prompt via opencode agent; body: `{"port": 1, "character": "FOX", "prompt": "..."}`
-- `GET /api/state` — phase, scores, winner
-- `GET /api/last-form` — return last submitted lobby form (names, characters, code, prompt)
-- `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action)
+- `GET /lobby` — team landing page: 4 join buttons, live team status, START button (`/` redirects here)
+- `GET /team/{n}` — team workspace: captain claim, character pick, contributions stack, assemble & generate, code override, ready toggle
+- `GET /watch` — Twitch stream embed + live team scores
+- `GET /admin` — phase pill, team readiness, end-match / reset-teams buttons
+- `POST /api/start` — queue a match (parameterless; pulls all 4 teams' state from `TeamRegistry`; requires all 4 ready)
+- `POST /api/stop` — abort the running match and return to IDLE
+- `POST /api/teams/reset` — clear all team state for a fresh round (operator)
+- `GET /api/teams` — 4-team summary for the landing page
+- `GET /api/team/{n}` — full team state
+- `POST /api/team/{n}/captain` — claim/take over captain (`{nonce, nickname, force?}`)
+- `POST /api/team/{n}/character` — captain sets character
+- `POST /api/team/{n}/name` — captain renames the team
+- `POST /api/team/{n}/contribute` — add a prompt contribution (`{nonce, nickname, text}`)
+- `DELETE /api/team/{n}/contribution/{id}` — remove a contribution (own or captain)
+- `POST /api/team/{n}/code` — captain sets code override
+- `POST /api/team/{n}/prompt-preview` — preview the assembled prompt without generating
+- `POST /api/team/{n}/generate` — assemble + run bot-writer; returns version
+- `POST /api/team/{n}/ready` — captain toggles ready
+- `GET /api/state` — phase, scores (with team_name), winner
+- `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action, team_name)
+- `WS /ws/teams` — push 4-team summary on any team change (landing page)
+- `WS /ws/team/{n}` — push full team state on any change to that team (team workspace)
 
 Characters map to fixed bot files in `core/bots/` (fox.py, marth.py,
 falcon.py, falco.py) used as the trusted in-process fallback when a port's

@@ -1,4 +1,5 @@
 """Shared application state — written by the orchestrator, read by FastAPI."""
+
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -6,18 +7,19 @@ from typing import Optional
 
 
 class Phase(str, Enum):
-    IDLE      = "idle"
-    STARTING  = "starting"
-    IN_GAME   = "in_game"
-    POSTGAME  = "postgame"
+    IDLE = "idle"
+    STARTING = "starting"
+    IN_GAME = "in_game"
+    POSTGAME = "postgame"
 
 
 @dataclass
 class PlayerConfig:
     port: int
     name: str
-    character: str   # melee.Character name, e.g. "FOX"
+    character: str  # melee.Character name, e.g. "FOX"
     bot_path: Path
+    team_name: str = ""  # display name of the team controlling this port
 
 
 @dataclass
@@ -28,6 +30,7 @@ class PlayerScore:
     stock: int = 4
     percent: float = 0.0
     action: str = ""
+    team_name: str = ""
 
 
 @dataclass
@@ -54,6 +57,7 @@ class AppState:
                     "stock": s.stock,
                     "percent": s.percent,
                     "action": s.action,
+                    "team_name": s.team_name,
                 }
                 for p, s in self.scores.items()
             },

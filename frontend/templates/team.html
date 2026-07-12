@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smash Tournament — Team {{ team_id }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; min-height: 100vh; }
+
+    header {
+      background: #1a1a2e;
+      padding: 1.2rem 2rem;
+      border-bottom: 2px solid #e94560;
+      display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
+    }
+    header h1 { font-size: 1.5rem; color: #e94560; letter-spacing: 3px; }
+    nav { display: flex; gap: 0.5rem; margin-left: auto; }
+    nav a {
+      text-decoration: none; color: #9090c0; font-size: 0.8rem; letter-spacing: 1px;
+      padding: 0.4rem 1rem; border-radius: 4px; background: #2a2a4a; transition: background 0.2s, color 0.2s;
+    }
+    nav a:hover { background: #35355a; color: #c0c0e0; }
+    nav a.active { background: #e94560; color: #fff; }
+
+    .team-banner {
+      padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .team-badge {
+      width: 44px; height: 44px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem; font-weight: bold; flex-shrink: 0;
+    }
+    .p1 { background: #4fc3f7; color: #000; }
+    .p2 { background: #ef9a9a; color: #000; }
+    .p3 { background: #a5d6a7; color: #000; }
+    .p4 { background: #ffe082; color: #000; }
+    .team-banner h2 { font-size: 1.1rem; letter-spacing: 2px; }
+    .team-banner .team-char { font-size: 0.75rem; color: #6060a0; letter-spacing: 1px; }
+
+    main { max-width: 720px; margin: 1.5rem auto; padding: 0 1.5rem; }
+
+    .card {
+      background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+      padding: 1.3rem; margin-bottom: 1.2rem;
+    }
+    .card h3 { font-size: 0.8rem; color: #6060a0; letter-spacing: 2px; margin-bottom: 0.8rem; }
+
+    .captain-bar { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+    #captain-display {
+      font-size: 0.85rem; color: #9090b0; flex: 1;
+    }
+    #captain-display .cap-name { color: #ffe082; font-weight: bold; }
+    .btn {
+      padding: 0.45rem 1rem; border: none; border-radius: 5px;
+      font-family: inherit; font-size: 0.75rem; cursor: pointer; letter-spacing: 1px;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #e94560; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #c73352; }
+    .btn-green { background: #2a5a2a; color: #cfe8cf; }
+    .btn-green:hover:not(:disabled) { background: #3a7a3a; }
+    .btn-yellow { background: #5a5a2a; color: #ffe082; }
+    .btn-yellow:hover:not(:disabled) { background: #7a7a3a; }
+    .btn-ghost { background: #2a2a4a; color: #9090c0; }
+    .btn-ghost:hover:not(:disabled) { background: #35355a; }
+    .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.68rem; }
+
+    label { font-size: 0.7rem; color: #6060a0; letter-spacing: 1px; display: block; margin-bottom: 0.25rem; }
+    input[type=text], select {
+      width: 100%; padding: 0.5rem 0.7rem;
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
+      color: #e0e0e0; font-family: inherit; font-size: 0.85rem;
+      outline: none; transition: border-color 0.2s;
+    }
+    input[type=text]:focus, select:focus { border-color: #e94560; }
+    input[type=text]:disabled, select:disabled { opacity: 0.5; cursor: not-allowed; }
+    textarea {
+      width: 100%; padding: 0.5rem 0.7rem; min-height: 80px;
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
+      color: #e0e0e0; font-family: inherit; font-size: 0.82rem; line-height: 1.4;
+      resize: vertical; outline: none; transition: border-color 0.2s;
+      white-space: pre-wrap; overflow-wrap: break-word;
+    }
+    textarea:focus { border-color: #e94560; }
+    textarea.code-area {
+      min-height: 160px; font-family: 'Courier New', monospace; font-size: 0.75rem;
+      white-space: pre; overflow-wrap: normal; overflow-x: auto; color: #cfe8cf; tab-size: 4;
+    }
+
+    .contrib-list { display: flex; flex-direction: column; gap: 0.6rem; }
+    .contrib {
+      background: #11112a; border: 1px solid #2a2a4a; border-left: 3px solid #3a3a6a;
+      border-radius: 4px; padding: 0.6rem 0.8rem;
+    }
+    .contrib-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
+    .contrib .nick { font-size: 0.72rem; color: #ffe082; font-weight: bold; }
+    .contrib .time { font-size: 0.62rem; color: #505070; }
+    .contrib .body { font-size: 0.8rem; color: #c0c0d0; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .contrib .del-btn {
+      background: none; border: none; color: #5a3a4a; cursor: pointer;
+      font-size: 0.65rem; padding: 0.1rem 0.3rem; border-radius: 3px; margin-left: 0.5rem;
+    }
+    .contrib .del-btn:hover { color: #e94560; background: #2a1a24; }
+    .contrib.empty-msg { border-left-color: #2a2a4a; color: #6060a0; font-style: italic; text-align: center; padding: 1rem; }
+
+    .contribute-form { margin-top: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .contribute-form .row { display: flex; gap: 0.5rem; }
+    .contribute-form .row input[type=text] { flex: 0 0 140px; }
+
+    .gen-section { display: flex; flex-direction: column; gap: 0.6rem; }
+    .gen-status { font-size: 0.72rem; min-height: 1rem; }
+    .gen-status.ok { color: #81c784; }
+    .gen-status.err { color: #e94560; }
+    .gen-status.info { color: #6060a0; }
+    .spinner {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid #333; border-top-color: #e94560; border-radius: 50%;
+      animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 0.3rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    details > summary {
+      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
+      list-style: none; user-select: none; padding: 0.2rem 0;
+    }
+    details > summary::before { content: '▸ '; }
+    details[open] > summary::before { content: '▾ '; }
+    .warn { font-size: 0.68rem; color: #e94560; margin-top: 0.3rem; }
+
+    .ready-bar { display: flex; align-items: center; gap: 0.8rem; }
+    .ready-indicator {
+      font-size: 0.78rem; padding: 0.3rem 0.8rem; border-radius: 12px;
+      border: 1px solid #2a2a4a; color: #9090b0; letter-spacing: 1px;
+    }
+    .ready-indicator.on { color: #81c784; border-color: #2a5a2a; background: #1a2a1a; }
+
+    #status { font-size: 0.75rem; color: #6060a0; min-height: 1.1rem; }
+    #status.ok { color: #81c784; }
+    #status.err { color: #e94560; }
+
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      z-index: 100; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: #1a1a2e; border: 1px solid #3a3a6a; border-radius: 10px;
+      padding: 1.5rem; max-width: 600px; width: 100%; max-height: 80vh; overflow-y: auto;
+    }
+    .modal h3 { font-size: 0.9rem; color: #e94560; letter-spacing: 2px; margin-bottom: 0.8rem; }
+    .modal pre {
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 6px;
+      padding: 1rem; font-size: 0.72rem; line-height: 1.5; color: #cfe8cf;
+      white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; margin-bottom: 1rem;
+    }
+    .modal-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>⚔ SMASH TOURNAMENT</h1>
+  <nav>
+    <a href="/lobby">LOBBY</a>
+    <a href="/watch">WATCH</a>
+    <a href="/admin">ADMIN</a>
+  </nav>
+</header>
+
+<div class="team-banner">
+  <div class="team-badge p{{ team_id }}" id="team-badge">T{{ team_id }}</div>
+  <div>
+    <h2 id="team-name">TEAM {{ team_id }}</h2>
+    <div class="team-char" id="team-char-display"></div>
+  </div>
+</div>
+
+<main>
+  <div id="status"></div>
+
+  <!-- Captain + team config -->
+  <div class="card">
+    <h3>CAPTAIN</h3>
+    <div class="captain-bar">
+      <div id="captain-display">No captain yet.</div>
+      <button class="btn btn-primary" id="captain-btn" onclick="claimCaptain(false)">BECOME CAPTAIN</button>
+    </div>
+    <div style="margin-top: 0.8rem;">
+      <label>TEAM NAME</label>
+      <input type="text" id="team-name-input" maxlength="24" placeholder="TEAM {{ team_id }}" disabled
+             onchange="updateTeamName()"/>
+    </div>
+    <div style="margin-top: 0.8rem;">
+      <label>CHARACTER</label>
+      <select id="char-select" disabled onchange="updateCharacter()">
+        {% for key, label in characters.items() %}
+        <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <!-- Contributions -->
+  <div class="card">
+    <h3>STRATEGY CONTRIBUTIONS <span id="contrib-count" style="color:#505070">(0)</span></h3>
+    <div class="contrib-list" id="contrib-list">
+      <div class="contrib empty-msg">No contributions yet. Be the first to add a strategy idea!</div>
+    </div>
+    <div class="contribute-form">
+      <div class="row">
+        <input type="text" id="contrib-nick" maxlength="24" placeholder="Your nickname"/>
+      </div>
+      <textarea id="contrib-text" maxlength="1000" placeholder="Describe a strategy idea for the bot, e.g. 'play defensively and shield-grab, edgeguard with down-tilt'"></textarea>
+      <button class="btn btn-green" id="contrib-btn" onclick="addContribution()">ADD CONTRIBUTION</button>
+    </div>
+  </div>
+
+  <!-- Generate -->
+  <div class="card">
+    <h3>ASSEMBLE &amp; GENERATE BOT (captain only)</h3>
+    <div class="gen-section">
+      <div id="gen-status" class="gen-status"></div>
+      <button class="btn btn-yellow" id="preview-btn" onclick="previewPrompt()" disabled>PREVIEW ASSEMBLED PROMPT</button>
+      <button class="btn btn-primary" id="generate-btn" onclick="generateBot()" disabled>ASSEMBLE &amp; GENERATE</button>
+      <div style="font-size:0.68rem; color:#505070; margin-top:0.3rem;">
+        Combines all contributions into one prompt and sends it to the bot-writer agent. Takes 30s-5min.
+      </div>
+    </div>
+  </div>
+
+  <!-- Code override -->
+  <div class="card">
+    <details id="code-details">
+      <summary>CAPTAIN CODE OVERRIDE (optional — overrides generated bot)</summary>
+      <div class="warn">If you paste code here, it takes priority over the team's prompt-generated bot at match start.</div>
+      <textarea class="code-area" id="code-override" spellcheck="false" maxlength="20000"
+                placeholder="Paste a Python Bot class here. See the guide on the lobby page."
+                style="margin-top:0.5rem;"></textarea>
+      <div style="display:flex; gap:0.5rem; margin-top:0.4rem;">
+        <button class="btn btn-sm btn-green" id="code-save-btn" onclick="saveCode()">SAVE CODE</button>
+        <button class="btn btn-sm btn-ghost" onclick="clearCode()">CLEAR CODE</button>
+      </div>
+      <div class="gen-status" id="code-status"></div>
+    </details>
+  </div>
+
+  <!-- Ready -->
+  <div class="card">
+    <h3>READY UP</h3>
+    <div class="ready-bar">
+      <span class="ready-indicator" id="ready-indicator">NOT READY</span>
+      <button class="btn btn-green" id="ready-btn" onclick="toggleReady()" disabled>MARK READY</button>
+    </div>
+    <div style="font-size:0.68rem; color:#505070; margin-top:0.5rem;">
+      When all 4 teams are ready, someone hits START on the lobby page.
+    </div>
+  </div>
+</main>
+
+<!-- Preview modal -->
+<div class="modal-overlay" id="preview-modal" onclick="if(event.target===this)closePreview()">
+  <div class="modal">
+    <h3>ASSEMBLED PROMPT PREVIEW</h3>
+    <pre id="preview-text"></pre>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePreview()">CLOSE</button>
+      <button class="btn btn-primary" onclick="closePreview(); generateBot()">GENERATE</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TEAM_ID = {{ team_id }};
+const twitchChannel = {{ twitch_channel|tojson }};
+
+// ---- Client identity (persists across refreshes via localStorage) ----
+function getNonce() {
+  let n = localStorage.getItem('smash_nonce');
+  if (!n) {
+    n = 'c' + Date.now() + Math.random().toString(36).slice(2, 8);
+    localStorage.setItem('smash_nonce', n);
+  }
+  return n;
+}
+function getNick() {
+  return localStorage.getItem('smash_nick') || '';
+}
+function setNick(v) {
+  localStorage.setItem('smash_nick', v);
+}
+
+// ---- State ----
+let state = null;
+let isCaptain = false;
+
+const statusEl = document.getElementById('status');
+function setStatus(msg, cls = '') {
+  statusEl.textContent = msg;
+  statusEl.className = cls;
+}
+
+// ---- Render ----
+function render(s) {
+  state = s;
+  isCaptain = s.you_are_captain === true;
+
+  // Team name + char in banner
+  document.getElementById('team-name').textContent = s.name;
+  document.getElementById('team-char-display').textContent = s.character_label;
+
+  // Captain controls
+  const capDisplay = document.getElementById('captain-display');
+  const capBtn = document.getElementById('captain-btn');
+  if (s.has_captain) {
+    if (isCaptain) {
+      capDisplay.innerHTML = 'You are captain. <span class="cap-name">' + esc(s.captain_name) + '</span>';
+      capBtn.textContent = 'ABDICATE';
+      capBtn.className = 'btn btn-ghost';
+      capBtn.onclick = () => claimCaptain(true, true);
+    } else {
+      capDisplay.innerHTML = 'Captain: <span class="cap-name">' + esc(s.captain_name) + '</span>';
+      capBtn.textContent = 'TAKE OVER';
+      capBtn.className = 'btn btn-primary';
+      capBtn.onclick = () => claimCaptain(true);
+    }
+  } else {
+    capDisplay.textContent = 'No captain yet.';
+    capBtn.textContent = 'BECOME CAPTAIN';
+    capBtn.className = 'btn btn-primary';
+    capBtn.onclick = () => claimCaptain(false);
+  }
+
+  // Team name input (captain only)
+  const nameInput = document.getElementById('team-name-input');
+  nameInput.disabled = !isCaptain;
+  if (isCaptain && nameInput.value !== s.name) nameInput.value = s.name;
+
+  // Character select (captain only)
+  const charSelect = document.getElementById('char-select');
+  charSelect.disabled = !isCaptain;
+  if (s.character && charSelect.value !== s.character) charSelect.value = s.character;
+
+  // Contributions
+  const list = document.getElementById('contrib-list');
+  const countEl = document.getElementById('contrib-count');
+  countEl.textContent = '(' + s.contributions.length + ')';
+  if (s.contributions.length === 0) {
+    list.innerHTML = '<div class="contrib empty-msg">No contributions yet. Be the first to add a strategy idea!</div>';
+  } else {
+    list.innerHTML = '';
+    for (const c of s.contributions) {
+      const div = document.createElement('div');
+      div.className = 'contrib';
+      const mine = c.author_nonce === getNonce();
+      const canDel = mine || isCaptain;
+      const time = new Date(c.ts * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      div.innerHTML = '<div class="contrib-head">' +
+        '<span class="nick">' + esc(c.nickname) + (mine ? ' (you)' : '') + '</span>' +
+        '<span class="time">' + time + (canDel ? ' <button class="del-btn" onclick="delContrib(\'' + c.id + '\')">DELETE</button>' : '') + '</span>' +
+        '</div><div class="body">' + esc(c.text) + '</div>';
+      list.appendChild(div);
+    }
+  }
+
+  // Nick field
+  const nickField = document.getElementById('contrib-nick');
+  if (!nickField.value) nickField.value = getNick();
+
+  // Generate buttons (captain only, need contributions)
+  const canGen = isCaptain && s.contributions.length > 0;
+  document.getElementById('preview-btn').disabled = !canGen;
+  document.getElementById('generate-btn').disabled = !canGen;
+
+  // Gen status
+  const genStatus = document.getElementById('gen-status');
+  if (s.generated_version) {
+    genStatus.textContent = 'Generated bot ready (version ' + s.generated_version + ')';
+    genStatus.className = 'gen-status ok';
+  }
+
+  // Code override
+  const codeArea = document.getElementById('code-override');
+  if (isCaptain && codeArea.value !== s.code_override && !codeArea.dataset.touched) {
+    codeArea.value = s.code_override;
+  }
+  if (!isCaptain) codeArea.disabled = true; else codeArea.disabled = false;
+  const codeDetails = document.getElementById('code-details');
+  if (s.has_code_override && !codeDetails.open) codeDetails.open = true;
+
+  // Ready
+  const readyInd = document.getElementById('ready-indicator');
+  const readyBtn = document.getElementById('ready-btn');
+  readyInd.textContent = s.ready ? 'READY' : 'NOT READY';
+  readyInd.className = 'ready-indicator' + (s.ready ? ' on' : '');
+  readyBtn.disabled = !isCaptain;
+  readyBtn.textContent = s.ready ? 'UNREADY' : 'MARK READY';
+  readyBtn.className = s.ready ? 'btn btn-ghost' : 'btn btn-green';
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ---- API calls ----
+async function api(path, method, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (res.status === 204) return null;
+  const data = await res.json();
+  if (!res.ok) throw { status: res.status, detail: data.detail || 'Error', raw: data };
+  return data;
+}
+
+async function claimCaptain(force, abdicate) {
+  const nonce = getNonce();
+  let nick = getNick();
+  if (!nick) {
+    nick = prompt('Enter your nickname (this will be shown to your team):');
+    if (!nick) return;
+    setNick(nick);
+  }
+  try {
+    if (abdicate) {
+      if (!confirm('Abdicate as captain? Someone else can take over.')) return;
+      await api(`/api/team/${TEAM_ID}/captain`, 'POST', { nonce: 'abdicated_' + nonce, nickname: '', force: true });
+      return;
+    }
+    if (force) {
+      if (!confirm('Take over as captain from the current one?')) return;
+    }
+    const data = await api(`/api/team/${TEAM_ID}/captain`, 'POST', { nonce, nickname: nick, force });
+    render(data);
+  } catch (e) {
+    if (e.status === 409 && e.detail === 'captain_exists') {
+      if (confirm('Someone is already captain. Take over?')) {
+        claimCaptain(true);
+      }
+    } else {
+      setStatus(e.detail, 'err');
+    }
+  }
+}
+
+async function updateTeamName() {
+  if (!isCaptain) return;
+  const name = document.getElementById('team-name-input').value.trim();
+  if (!name) return;
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/name`, 'POST', { name, nonce: getNonce() });
+    render(data);
+  } catch (e) { setStatus(e.detail, 'err'); }
+}
+
+async function updateCharacter() {
+  if (!isCaptain) return;
+  const char = document.getElementById('char-select').value;
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/character`, 'POST', { character: char, nonce: getNonce() });
+    render(data);
+  } catch (e) { setStatus(e.detail, 'err'); }
+}
+
+async function addContribution() {
+  const nick = document.getElementById('contrib-nick').value.trim();
+  const text = document.getElementById('contrib-text').value.trim();
+  if (!text) { setStatus('Write something first.', 'err'); return; }
+  if (nick) setNick(nick);
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/contribute`, 'POST', { nonce: getNonce(), nickname: nick, text });
+    document.getElementById('contrib-text').value = '';
+    render(data);
+  } catch (e) { setStatus(e.detail, 'err'); }
+}
+
+async function delContrib(id) {
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/contribution/${id}?nonce=${encodeURIComponent(getNonce())}`, 'DELETE');
+    render(data);
+  } catch (e) { setStatus(e.detail, 'err'); }
+}
+
+async function previewPrompt() {
+  if (!state || state.contributions.length === 0) return;
+  try {
+    const res = await fetch('/api/team/' + TEAM_ID + '/prompt-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nonce: getNonce() }),
+    });
+    const data = await res.json();
+    document.getElementById('preview-text').textContent = data.prompt || '(empty)';
+    document.getElementById('preview-modal').classList.add('show');
+  } catch (e) { setStatus('Could not preview prompt', 'err'); }
+}
+function closePreview() {
+  document.getElementById('preview-modal').classList.remove('show');
+}
+
+let generating = false;
+async function generateBot() {
+  if (generating) return;
+  if (!isCaptain || !state || state.contributions.length === 0) return;
+  generating = true;
+  const btn = document.getElementById('generate-btn');
+  const status = document.getElementById('gen-status');
+  btn.disabled = true;
+  status.innerHTML = '<span class="spinner"></span>Generating bot... (this can take a minute)';
+  status.className = 'gen-status info';
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/generate`, 'POST', { nonce: getNonce() });
+    if (data.ok) {
+      status.textContent = 'Generated bot ready (version ' + data.version_id + ')';
+      status.className = 'gen-status ok';
+    } else {
+      status.textContent = data.error || 'Generation failed';
+      status.className = 'gen-status err';
+    }
+  } catch (e) {
+    status.textContent = e.detail || 'Request failed';
+    status.className = 'gen-status err';
+  } finally {
+    generating = false;
+    btn.disabled = !isCaptain || !state || state.contributions.length === 0;
+  }
+}
+
+async function saveCode() {
+  if (!isCaptain) return;
+  const code = document.getElementById('code-override').value;
+  document.getElementById('code-override').dataset.touched = '1';
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/code`, 'POST', { code, nonce: getNonce() });
+    if (data.ok === false) {
+      document.getElementById('code-status').textContent = data.error || 'Invalid code';
+      document.getElementById('code-status').className = 'gen-status err';
+    } else {
+      document.getElementById('code-status').textContent = 'Code saved.';
+      document.getElementById('code-status').className = 'gen-status ok';
+    }
+  } catch (e) {
+    document.getElementById('code-status').textContent = e.detail;
+    document.getElementById('code-status').className = 'gen-status err';
+  }
+}
+function clearCode() {
+  if (!isCaptain) return;
+  document.getElementById('code-override').value = '';
+  saveCode();
+}
+
+async function toggleReady() {
+  if (!isCaptain || !state) return;
+  try {
+    const data = await api(`/api/team/${TEAM_ID}/ready`, 'POST', { ready: !state.ready, nonce: getNonce() });
+    render(data);
+  } catch (e) { setStatus(e.detail, 'err'); }
+}
+
+// Mark code textarea as touched so WS updates don't clobber edits
+document.getElementById('code-override').addEventListener('input', function() {
+  this.dataset.touched = '1';
+});
+
+// ---- WebSocket: push-on-change team state ----
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws/team/${TEAM_ID}?nonce=${encodeURIComponent(getNonce())}`);
+  ws.onmessage = e => {
+    const data = JSON.parse(e.data);
+    render(data);
+  };
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+
+// ---- Initial fetch (WS sends a snapshot too, but this covers the race) ----
+fetch(`/api/team/${TEAM_ID}?nonce=${encodeURIComponent(getNonce())}`).then(r => r.json()).then(render).catch(() => {});
+</script>
+</body>
+</html>

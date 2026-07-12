@@ -51,7 +51,7 @@
     .score-card.eliminated { opacity: 0.35; }
     .score-card.winner { border-color: gold; box-shadow: 0 0 12px gold; }
 
-    .player-name { font-size: 0.75rem; color: #9090b0; letter-spacing: 1px; margin-bottom: 0.2rem; }
+    .team-name { font-size: 0.85rem; color: #e0e0e0; letter-spacing: 1px; margin-bottom: 0.15rem; font-weight: bold; }
     .char-name   { font-size: 0.65rem; color: #5050a0; margin-bottom: 0.5rem; }
 
     .stocks { display: flex; justify-content: center; gap: 4px; margin-bottom: 0.4rem; }
@@ -106,7 +106,7 @@
 <div class="scoreboard" id="scoreboard">
   {% for p in players %}
   <div class="score-card p{{ p.port }}" id="card-{{ p.port }}">
-    <div class="player-name">{{ p.name }}</div>
+    <div class="team-name">{{ p.team_name }}</div>
     <div class="char-name">{{ p.character }}</div>
     <div class="stocks" id="stocks-{{ p.port }}">
       {% for _ in range(4) %}<span class="stock-icon"></span>{% endfor %}

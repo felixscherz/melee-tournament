@@ -149,7 +149,12 @@ class MeleeOrchestrator:
         self.state.phase = Phase.STARTING
         self.state.players = players
         self.state.scores = {
-            p.port: PlayerScore(port=p.port, name=p.name, character=p.character)
+            p.port: PlayerScore(
+                port=p.port,
+                name=p.name,
+                character=p.character,
+                team_name=p.team_name,
+            )
             for p in players
         }
         self.state.winner = None
@@ -444,7 +449,7 @@ class MeleeOrchestrator:
                     if gs.players.get(p.port) and gs.players[p.port].stock > 0
                 ]
                 if len(alive) == 1 and self.state.phase == Phase.IN_GAME:
-                    self.state.winner = alive[0].name
+                    self.state.winner = alive[0].team_name or alive[0].name
                     self.state.phase = Phase.POSTGAME
 
             async with self._lock:
