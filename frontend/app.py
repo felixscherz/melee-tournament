@@ -81,6 +81,10 @@ def _team_error_to_http(exc: TeamError) -> HTTPException:
         return HTTPException(status_code=404, detail="Team not found")
     if msg == "captain_exists":
         return HTTPException(status_code=409, detail="captain_exists")
+    if msg == "min_teams":
+        return HTTPException(status_code=409, detail="At least 2 teams required")
+    if msg == "max_teams":
+        return HTTPException(status_code=409, detail="All 4 teams already active")
     if msg == "invalid_character":
         return HTTPException(status_code=400, detail="Unknown character")
     if msg == "invalid_name":
@@ -344,6 +348,43 @@ async def set_ready(team_id: int, body: dict):
         raise _team_error_to_http(exc)
 
 
+def _require_lobby_open() -> None:
+    """Team roster changes are only allowed while no match is live."""
+    if app_state.phase not in (Phase.IDLE, Phase.POSTGAME):
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the running match before changing teams",
+        )
+
+
+@app.post("/api/team/{team_id}/activate")
+async def activate_team(team_id: int):
+    """Add team {team_id} to the active roster (operator, lobby only)."""
+    _require_lobby_open()
+    try:
+        teams.team(team_id)  # validate slot
+        teams.activate(team_id)
+    except TeamError as exc:
+        raise _team_error_to_http(exc)
+    await teams.broadcast_summary()
+    await teams.broadcast_team(team_id)
+    return {"ok": True, "active": teams.active_ids()}
+
+
+@app.post("/api/team/{team_id}/deactivate")
+async def deactivate_team(team_id: int):
+    """Remove team {team_id} from the active roster (operator, lobby only)."""
+    _require_lobby_open()
+    try:
+        teams.team(team_id)  # validate slot
+        teams.deactivate(team_id)
+    except TeamError as exc:
+        raise _team_error_to_http(exc)
+    await teams.broadcast_summary()
+    await teams.broadcast_team(team_id)
+    return {"ok": True, "active": teams.active_ids()}
+
+
 @app.post("/api/teams/reset")
 async def reset_teams():
     """Clear all team state for a fresh round (operator). Does not abort a
@@ -414,21 +455,22 @@ def _resolve_bot_path(port: int, character: str, code: str | None) -> Path:
 async def start_game():
     """Start a match from the current team state.
 
-    All 4 teams must be READY and the game must be in IDLE or POSTGAME phase.
-    Each team's character, code override, and generated bot are pulled from
-    the TeamRegistry (not from the request body).
+    Every ACTIVE team must be READY (minimum 2), and the game must be in IDLE
+    or POSTGAME phase. Each team's character, code override, and generated bot
+    are pulled from the TeamRegistry (not from the request body).
     """
     if app_state.phase not in (Phase.IDLE, Phase.POSTGAME):
         raise HTTPException(status_code=409, detail="A game is already running")
     if not teams.all_ready():
         raise HTTPException(
-            status_code=409, detail="All 4 teams must be ready to start"
+            status_code=409,
+            detail="All active teams must be ready to start (min 2)",
         )
     if _orchestrator is None:
         raise HTTPException(status_code=503, detail="Orchestrator not ready")
 
     configs = []
-    for team_id in (1, 2, 3, 4):
+    for team_id in teams.active_ids():
         t = teams.team(team_id)
         char = t.character.upper()
         if not is_valid_character(char):
@@ -446,7 +488,7 @@ async def start_game():
             )
         )
 
-    _orchestrator.queue_match(configs)
+    await _orchestrator.queue_match(configs)
     return {"status": "starting"}
 
 

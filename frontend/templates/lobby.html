@@ -43,6 +43,19 @@
     }
     .team-card:hover { border-color: #e94560; transform: translateY(-2px); }
     .team-card .tc-head { display: flex; align-items: center; gap: 0.7rem; }
+    .tc-remove {
+      margin-left: auto; background: #3a1a24; color: #e94560; border: 1px solid #5a2a34;
+      border-radius: 6px; width: 24px; height: 24px; font-size: 0.85rem; line-height: 1;
+      cursor: pointer; flex-shrink: 0; font-family: inherit;
+    }
+    .tc-remove:hover { background: #4a2a34; }
+    /* Inactive slot: "add team" placeholder */
+    .team-card.add {
+      border-style: dashed; align-items: center; justify-content: center;
+      color: #6060a0; font-size: 0.9rem; letter-spacing: 2px; min-height: 120px;
+    }
+    .team-card.add:hover { border-color: #81c784; color: #81c784; transform: none; }
+    .team-card.add .plus { font-size: 1.6rem; margin-bottom: 0.3rem; }
     .team-badge {
       width: 36px; height: 36px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
@@ -141,7 +154,7 @@
 </header>
 
 <div class="hero">
-  <h2>4 TEAMS. 4 BOTS. 1 WINNER.</h2>
+  <h2>2-4 TEAMS. 1 WINNER.</h2>
   <p>Join a team, pitch your strategy, and let the AI build your fighter.</p>
 </div>
 
@@ -180,7 +193,7 @@
     <li>Click a team above to join. First person to claim it becomes the captain.</li>
     <li>Everyone on the team adds strategy ideas (short prompts). The captain picks the character.</li>
     <li>The captain clicks <strong>ASSEMBLE &amp; GENERATE</strong> to combine all ideas into one bot, or pastes custom code to override.</li>
-    <li>Captain hits <strong>READY</strong>. When all 4 teams are ready, someone presses <strong>START MATCH</strong> here.</li>
+    <li>Add or remove teams (2-4) with the slots above. Captain hits <strong>READY</strong>; when all active teams are ready, someone presses <strong>START MATCH</strong> here.</li>
     <li>Watch the carnage on the <a href="/watch" style="color:#e94560">watch page</a>. <code>/api/teams/reset</code> or the RESET TEAMS button starts a fresh round.</li>
   </ol>
 </div>
@@ -201,7 +214,7 @@ function initTwitch() {
 }
 initTwitch();
 
-let teamsData = [];
+let allTeams = [];
 let phase = 'idle';
 
 const statusEl = document.getElementById('status');
@@ -210,43 +223,69 @@ function setStatus(msg, cls = '') {
   statusEl.className = cls;
 }
 
+function activeTeams() { return allTeams.filter(t => t.active); }
+function lobbyOpen() { return phase === 'idle' || phase === 'postgame'; }
+
 function renderTeams(teams) {
-  teamsData = teams || [];
+  if (teams) allTeams = teams;
+  const active = activeTeams();
   const grid = document.getElementById('team-grid');
   grid.innerHTML = '';
-  for (const t of teamsData) {
-    const a = document.createElement('a');
-    a.href = `/team/${t.team_id}`;
-    a.className = 'team-card';
-    a.style.borderColor = t.ready ? '#2a5a2a' : '#2a2a4a';
-
-    let statusCls = 'pending', statusTxt = 'waiting';
-    if (t.ready) { statusCls = 'ready'; statusTxt = 'READY'; }
-    else if (!t.has_captain) { statusCls = 'nocap'; statusTxt = 'NO CAPTAIN'; }
-
-    const capStr = t.captain_name ? `Captain: ${t.captain_name}` : 'No captain yet';
-    const genStr = t.generated_version ? `Bot v${t.generated_version}` : (t.has_code_override ? 'Custom code' : 'Default AI');
-
-    a.innerHTML = `
-      <div class="tc-head">
-        <div class="team-badge ${t.color}">T${t.team_id}</div>
-        <div class="tc-name">${esc(t.name)}</div>
-      </div>
-      <div class="tc-info">
-        <div class="tc-char">${esc(t.character_label)}</div>
-        <div>${capStr}</div>
-        <div>${t.contrib_count} contribution${t.contrib_count !== 1 ? 's' : ''} - ${genStr}</div>
-      </div>
-      <span class="tc-status ${statusCls}">${statusTxt}</span>
-    `;
-    grid.appendChild(a);
+  for (const t of allTeams) {
+    if (t.active) {
+      grid.appendChild(renderActiveCard(t, active.length));
+    } else if (lobbyOpen()) {
+      grid.appendChild(renderAddCard(t));
+    }
   }
 }
 
-function renderReadyBar(teams) {
+function renderActiveCard(t, activeCount) {
+  const a = document.createElement('a');
+  a.href = `/team/${t.team_id}`;
+  a.className = 'team-card';
+  a.style.borderColor = t.ready ? '#2a5a2a' : '#2a2a4a';
+
+  let statusCls = 'pending', statusTxt = 'waiting';
+  if (t.ready) { statusCls = 'ready'; statusTxt = 'READY'; }
+  else if (!t.has_captain) { statusCls = 'nocap'; statusTxt = 'NO CAPTAIN'; }
+
+  const capStr = t.captain_name ? `Captain: ${t.captain_name}` : 'No captain yet';
+  const genStr = t.generated_version ? `Bot v${t.generated_version}` : (t.has_code_override ? 'Custom code' : 'Default AI');
+  // Remove is offered only while the lobby is open and above the 2-team minimum.
+  const canRemove = lobbyOpen() && activeCount > 2;
+  const removeBtn = canRemove
+    ? `<button class="tc-remove" title="Remove team" onclick="removeTeam(event, ${t.team_id})">&times;</button>`
+    : '';
+
+  a.innerHTML = `
+    <div class="tc-head">
+      <div class="team-badge ${t.color}">T${t.team_id}</div>
+      <div class="tc-name">${esc(t.name)}</div>
+      ${removeBtn}
+    </div>
+    <div class="tc-info">
+      <div class="tc-char">${esc(t.character_label)}</div>
+      <div>${capStr}</div>
+      <div>${t.contrib_count} contribution${t.contrib_count !== 1 ? 's' : ''} - ${genStr}</div>
+    </div>
+    <span class="tc-status ${statusCls}">${statusTxt}</span>
+  `;
+  return a;
+}
+
+function renderAddCard(t) {
+  const div = document.createElement('div');
+  div.className = 'team-card add';
+  div.innerHTML = `<div class="plus">+</div><div>ADD TEAM ${t.team_id}</div>`;
+  div.onclick = () => addTeam(t.team_id);
+  return div;
+}
+
+function renderReadyBar() {
   const bar = document.getElementById('ready-bar');
   bar.innerHTML = '';
-  for (const t of teams) {
+  for (const t of activeTeams()) {
     const chip = document.createElement('div');
     chip.className = 'ready-chip' + (t.ready ? ' on' : '');
     chip.innerHTML = `<strong>T${t.team_id}</strong> ${t.ready ? '&#10003;' : '\u2014'}`;
@@ -257,8 +296,9 @@ function renderReadyBar(teams) {
 function updateStartButton() {
   const startBtn = document.getElementById('start-btn');
   const stopBtn = document.getElementById('stop-btn');
-  const allReady = teamsData.length === 4 && teamsData.every(t => t.ready);
-  const canStart = allReady && (phase === 'idle' || phase === 'postgame');
+  const active = activeTeams();
+  const allReady = active.length >= 2 && active.every(t => t.ready);
+  const canStart = allReady && lobbyOpen();
   startBtn.disabled = !canStart;
 
   if (phase !== 'idle' && phase !== 'postgame') {
@@ -271,10 +311,14 @@ function updateStartButton() {
 }
 
 function renderPhase(p) {
+  const changed = phase !== p;
   phase = p;
   const pill = document.getElementById('phase-pill');
   pill.textContent = p;
   pill.className = p;
+  // Add/remove controls appear only while the lobby is open, so re-render the
+  // grid when the phase flips.
+  if (changed) renderTeams();
   updateStartButton();
 }
 
@@ -291,7 +335,7 @@ function connectTeamsWS() {
   ws.onmessage = e => {
     const data = JSON.parse(e.data);
     renderTeams(data.teams || []);
-    renderReadyBar(data.teams || []);
+    renderReadyBar();
     updateStartButton();
   };
   ws.onclose = () => setTimeout(connectTeamsWS, 2000);
@@ -329,6 +373,27 @@ async function stopGame() {
   try {
     await fetch('/api/stop', { method: 'POST' });
     setStatus('Match ending - back to lobby shortly.', 'ok');
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+
+async function addTeam(n) {
+  try {
+    const res = await fetch(`/api/team/${n}/activate`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus(`Team ${n} added.`, 'ok');
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+
+async function removeTeam(event, n) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (!confirm(`Remove Team ${n} from this round?`)) return;
+  try {
+    const res = await fetch(`/api/team/${n}/deactivate`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus(`Team ${n} removed.`, 'ok');
   } catch (e) { setStatus(e.message, 'err'); }
 }
 

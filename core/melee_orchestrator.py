@@ -37,7 +37,12 @@ STAGE = melee.Stage.FINAL_DESTINATION
 
 # Character shown while idling at CSS with no match queued (see _handle_frame).
 IDLE_CHARACTER = melee.Character.FOX
-PORTS = [1, 2, 3, 4]
+# All Dolphin controller ports. Which of these are actually plugged in for a
+# given match is decided per-match (2-4 teams); see _build_controllers and
+# _reconfigure. Whether a port is plugged (Dolphin's SIDevice) is read at boot,
+# so changing the active set requires relaunching Dolphin.
+ALL_PORTS = [1, 2, 3, 4]
+DEFAULT_PORTS = [1, 2]
 
 
 class MeleeOrchestrator:
@@ -45,6 +50,10 @@ class MeleeOrchestrator:
         self.cfg = config
         self.state = state
         self.console: Optional[melee.Console] = None
+        # Ports with a STANDARD controller plugged in for the current Dolphin
+        # session. Reconfigured (with a Dolphin relaunch) when a queued match
+        # needs a different active set. See _build_controllers / _reconfigure.
+        self._ports: list[int] = list(DEFAULT_PORTS)
         self._controllers: dict[int, melee.Controller] = {}
         # Subprocess sandbox workers for user bot code. One per port, spawned
         # in queue_match, torn down on match end / abort. See
@@ -54,9 +63,9 @@ class MeleeOrchestrator:
         # subprocess worker for a port dies or hits the deadline too many
         # times in a row. Run in-process: they are our code, not user code.
         self._fallback_loaders: dict[int, BotLoader] = {}
-        self._actions: dict[int, Optional[dict]] = {p: None for p in PORTS}
+        self._actions: dict[int, Optional[dict]] = {p: None for p in self._ports}
         self._lock = asyncio.Lock()
-        self._menu_helpers = {p: melee.MenuHelper() for p in PORTS}
+        self._menu_helpers = {p: melee.MenuHelper() for p in self._ports}
         self._pending_players: Optional[list[PlayerConfig]] = None
         self._active_players: Optional[list[PlayerConfig]] = None
         self._latest_gs: Optional[melee.GameState] = None
@@ -79,8 +88,7 @@ class MeleeOrchestrator:
     #  Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    async def launch(self):
-        """Start Dolphin once and keep it running. Called at server startup."""
+    def _kill_stale_dolphin(self):
         import subprocess as _sp
 
         try:
@@ -100,6 +108,15 @@ class MeleeOrchestrator:
         except Exception as exc:
             log.debug("Port cleanup skipped: %s", exc)
 
+    def _build_console(self, ports: list[int]):
+        """Create the Console and its controllers for the given active ports.
+
+        Every one of the four ports gets a Controller object so libmelee writes
+        the correct SIDevice into Dolphin.ini: STANDARD (plugged) for ports in
+        `ports`, UNPLUGGED for the rest. Only the plugged (STANDARD) controllers
+        are kept in self._controllers for driving. This runs BEFORE console.run
+        because Dolphin reads the controller config at boot.
+        """
         self.console = melee.Console(
             path=self.cfg["dolphin"]["path"],
             slippi_address="127.0.0.1",
@@ -108,25 +125,93 @@ class MeleeOrchestrator:
             polling_mode=False,
             fullscreen=False,
         )
-        for port in PORTS:
-            self._controllers[port] = melee.Controller(
-                console=self.console,
-                port=port,
-                type=melee.ControllerType.STANDARD,
+        self._controllers = {}
+        for port in ALL_PORTS:
+            ctype = (
+                melee.ControllerType.STANDARD
+                if port in ports
+                else melee.ControllerType.UNPLUGGED
             )
+            ctrl = melee.Controller(
+                console=self.console, port=port, type=ctype
+            )
+            if port in ports:
+                self._controllers[port] = ctrl
 
+    def _run_and_connect(self):
+        """Blocking: boot the ISO and connect the console + plugged controllers.
+
+        Runs off the event loop (via asyncio.to_thread) because console.connect
+        and the controllers' FIFO opens block.
+        """
         self.console.run(iso_path=self.cfg["dolphin"]["iso"])
         log.info("Connecting to Dolphin...")
         if not self.console.connect():
             raise RuntimeError("Could not connect to Dolphin")
         for ctrl in self._controllers.values():
             ctrl.connect()
-        log.info("Dolphin connected — game loop starting")
+
+    async def launch(self, ports: Optional[list[int]] = None):
+        """Start Dolphin and keep it running. Called at server startup.
+
+        `ports` is the initial active set (defaults to DEFAULT_PORTS); main.py
+        passes the persisted lobby's active teams so the boot controller set
+        matches what the lobby shows.
+        """
+        if ports:
+            self._ports = sorted(ports)
+        self._kill_stale_dolphin()
+        self._build_console(self._ports)
+        self._run_and_connect()
+        self._menu_helpers = {p: melee.MenuHelper() for p in self._ports}
+        self._actions = {p: None for p in self._ports}
+        log.info("Dolphin connected (ports %s) — game loop starting", self._ports)
 
         self._loop_task = asyncio.create_task(self._game_loop())
 
-    def queue_match(self, players: list[PlayerConfig]):
-        """Queue a new match. Picked up by the game loop at the next CSS frame."""
+    async def _reconfigure(self, ports: list[int]):
+        """Relaunch Dolphin with a different set of plugged controllers.
+
+        Whether a port is plugged (Dolphin's SIDevice) is fixed at boot, and
+        Melee won't start a match until every plugged controller has locked in
+        a character. So to change the fighter count we must relaunch. The game
+        loop is stopped first (it owns console.step), then the console is torn
+        down and rebuilt with the new controller config, then the loop restarts.
+        OBS re-acquires the "Slippi Dolphin" window automatically.
+        """
+        log.info("Reconfiguring Dolphin controllers %s -> %s", self._ports, ports)
+        if self._loop_task:
+            self._loop_task.cancel()
+            try:
+                await self._loop_task
+            except asyncio.CancelledError:
+                pass
+            self._loop_task = None
+        if self.console:
+            try:
+                self.console.stop()
+            except Exception:
+                pass
+        self._prev_menu = None
+        self._latest_gs = None
+        self._ports = sorted(ports)
+        self._kill_stale_dolphin()
+        self._build_console(self._ports)
+        await asyncio.to_thread(self._run_and_connect)
+        self._menu_helpers = {p: melee.MenuHelper() for p in self._ports}
+        self._actions = {p: None for p in self._ports}
+        log.info("Dolphin reconfigured (ports %s)", self._ports)
+        self._loop_task = asyncio.create_task(self._game_loop())
+
+    async def queue_match(self, players: list[PlayerConfig]):
+        """Queue a new match. Picked up by the game loop at the next CSS frame.
+
+        If the match needs a different set of ports than Dolphin currently has
+        plugged in, Dolphin is relaunched first (see _reconfigure).
+        """
+        new_ports = sorted(p.port for p in players)
+        if set(new_ports) != set(self._ports):
+            await self._reconfigure(new_ports)
         self._teardown_workers()
         self._bot_workers = {}
         self._fallback_loaders = {}
@@ -160,7 +245,7 @@ class MeleeOrchestrator:
         self.state.winner = None
         self._pending_players = players
         # Fresh MenuHelper instances so prior CSS state doesn't carry over
-        self._menu_helpers = {p: melee.MenuHelper() for p in PORTS}
+        self._menu_helpers = {p: melee.MenuHelper() for p in self._ports}
 
     def abort_match(self):
         """End the current match and return to the lobby.
@@ -187,7 +272,7 @@ class MeleeOrchestrator:
         self._force_end = False
         self._active_players = None
         self._teardown_workers()
-        self._actions = {p: None for p in PORTS}
+        self._actions = {p: None for p in self._ports}
         self.state.reset()
 
     def stop(self):
@@ -307,7 +392,7 @@ class MeleeOrchestrator:
             self._active_players = None
             self._pending_players = None
             self._teardown_workers()
-            self._actions = {p: None for p in PORTS}
+            self._actions = {p: None for p in self._ports}
             self.state.reset()
 
         # On any menu transition, flush held inputs once. Entering CSS with A
@@ -389,9 +474,9 @@ class MeleeOrchestrator:
                 if players
                 else IDLE_CHARACTER
             )
-            self._menu_helpers[PORTS[0]].menu_helper_simple(
+            self._menu_helpers[self._ports[0]].menu_helper_simple(
                 gamestate=gs,
-                controller=self._controllers[PORTS[0]],
+                controller=self._controllers[self._ports[0]],
                 character_selected=char,
                 stage_selected=STAGE,
                 cpu_level=0,
@@ -416,10 +501,10 @@ class MeleeOrchestrator:
                     self._tap_b(ctrl)
                 return
             char = CHARACTER_MAP.get(players[0].character, melee.Character.FOX)
-            self._menu_helpers[PORTS[0]].choose_stage(
+            self._menu_helpers[self._ports[0]].choose_stage(
                 stage=STAGE,
                 gamestate=gs,
-                controller=self._controllers[PORTS[0]],
+                controller=self._controllers[self._ports[0]],
                 character=char,
                 autostart=True,
             )
@@ -463,9 +548,9 @@ class MeleeOrchestrator:
             # before we ever get here — so this only handles a natural finish.)
             if self.state.phase == Phase.IN_GAME:
                 self.state.phase = Phase.POSTGAME
-            self._menu_helpers[PORTS[0]].menu_helper_simple(
+            self._menu_helpers[self._ports[0]].menu_helper_simple(
                 gamestate=gs,
-                controller=self._controllers[PORTS[0]],
+                controller=self._controllers[self._ports[0]],
                 character_selected=melee.Character.FOX,
                 stage_selected=STAGE,
                 cpu_level=0,

@@ -34,6 +34,14 @@ TEAM_COLORS = {1: "p1", 2: "p2", 3: "p3", 4: "p4"}
 DEFAULT_TEAM_NAMES = {1: "TEAM 1", 2: "TEAM 2", 3: "TEAM 3", 4: "TEAM 4"}
 DEFAULT_CHARACTERS = {1: "FOX", 2: "MARTH", 3: "CPTFALCON", 4: "FALCO"}
 
+# A team's identity IS its Dolphin port. All 4 slots always exist; each is
+# either active (in play) or inactive. The active set can be any subset of
+# {1,2,3,4} of size MIN_ACTIVE..4 (Melee supports non-contiguous plugged
+# controllers, so keeping teams 1 and 4 while dropping 2 and 3 is fine). Fresh
+# installs start with teams 1 and 2 active.
+MIN_ACTIVE = 2
+DEFAULT_ACTIVE = {1, 2}
+
 MAX_CONTRIBUTION_CHARS = 1000
 MAX_NICKNAME_CHARS = 24
 MAX_TEAM_NAME_CHARS = 24
@@ -56,6 +64,7 @@ class TeamState:
     team_id: int
     name: str
     color: str
+    active: bool = True
     captain_nonce: Optional[str] = None
     captain_name: Optional[str] = None
     character: str = ""
@@ -69,6 +78,7 @@ class TeamState:
             "team_id": self.team_id,
             "name": self.name,
             "color": self.color,
+            "active": self.active,
             "captain_name": self.captain_name,
             "has_captain": self.captain_nonce is not None,
             "you_are_captain": (
@@ -94,6 +104,7 @@ class TeamState:
             "team_id": self.team_id,
             "name": self.name,
             "color": self.color,
+            "active": self.active,
             "captain_name": self.captain_name,
             "has_captain": self.captain_nonce is not None,
             "character": self.character,
@@ -107,11 +118,12 @@ class TeamState:
         }
 
 
-def _new_team(team_id: int) -> TeamState:
+def _new_team(team_id: int, active: Optional[bool] = None) -> TeamState:
     return TeamState(
         team_id=team_id,
         name=DEFAULT_TEAM_NAMES[team_id],
         color=TEAM_COLORS[team_id],
+        active=(team_id in DEFAULT_ACTIVE) if active is None else active,
         character=DEFAULT_CHARACTERS[team_id],
     )
 
@@ -140,10 +152,16 @@ class TeamRegistry:
 
     # ---- read ----
 
+    def active_ids(self) -> list[int]:
+        return [i for i in TEAM_IDS if self._teams[i].active]
+
     def all_teams(self) -> list[TeamState]:
-        return [self._teams[i] for i in TEAM_IDS]
+        """Active teams only (used to build a match)."""
+        return [self._teams[i] for i in self.active_ids()]
 
     def summary(self) -> list[dict]:
+        """All 4 slots (each carrying `active`) so the lobby can render active
+        cards alongside inactive 'add team' placeholders."""
         return [self._teams[i].to_summary() for i in TEAM_IDS]
 
     def team(self, n: int) -> TeamState:
@@ -151,7 +169,28 @@ class TeamRegistry:
         return self._teams[n]
 
     def all_ready(self) -> bool:
-        return all(self._teams[i].ready for i in TEAM_IDS)
+        active = self.active_ids()
+        return len(active) >= MIN_ACTIVE and all(
+            self._teams[i].ready for i in active
+        )
+
+    # ---- activation ----
+
+    def activate(self, n: int) -> TeamState:
+        self._require_valid(n)
+        if not self._teams[n].active and len(self.active_ids()) >= len(TEAM_IDS):
+            raise TeamError("max_teams")
+        self._teams[n].active = True
+        self._save()
+        return self._teams[n]
+
+    def deactivate(self, n: int) -> TeamState:
+        self._require_valid(n)
+        if self._teams[n].active and len(self.active_ids()) <= MIN_ACTIVE:
+            raise TeamError("min_teams")
+        self._teams[n].active = False
+        self._save()
+        return self._teams[n]
 
     # ---- captain ----
 
@@ -269,7 +308,10 @@ class TeamRegistry:
     def reset_all(self) -> None:
         for i in TEAM_IDS:
             old_name = self._teams[i].name
-            self._teams[i] = _new_team(i)
+            old_active = self._teams[i].active
+            # Preserve the active set (operator's chosen bracket size) across
+            # resets — only captains/contributions/ready are cleared.
+            self._teams[i] = _new_team(i, active=old_active)
             # Keep a custom team name across resets (cosmetic).
             if old_name and old_name != DEFAULT_TEAM_NAMES[i]:
                 self._teams[i].name = old_name
@@ -324,6 +366,7 @@ class TeamRegistry:
             t = self._teams[i]
             data[str(i)] = {
                 "name": t.name,
+                "active": t.active,
                 "captain_nonce": t.captain_nonce,
                 "captain_name": t.captain_name,
                 "character": t.character,
@@ -347,6 +390,7 @@ class TeamRegistry:
                 continue
             t = self._teams[i]
             t.name = entry.get("name") or DEFAULT_TEAM_NAMES[i]
+            t.active = entry.get("active", i in DEFAULT_ACTIVE)
             t.captain_nonce = entry.get("captain_nonce")
             t.captain_name = entry.get("captain_name")
             t.character = entry.get("character") or DEFAULT_CHARACTERS[i]

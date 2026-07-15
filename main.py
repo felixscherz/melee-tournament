@@ -14,6 +14,7 @@ import uvicorn
 from core.config import load_settings
 from core.game_state import app_state
 from core.melee_orchestrator import MeleeOrchestrator
+from core.teams import teams
 import frontend.app as webapp
 
 log = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ async def main():
             )
 
     try:
-        await orchestrator.launch()
+        await orchestrator.launch(ports=teams.active_ids())
         await server.serve()
     finally:
         orchestrator.stop()

@@ -31,7 +31,7 @@ bot scripts or LLM prompts to control Super Smash Bros. Melee characters via
                └──────────────┬──────────────┘
                               │
                        [FastAPI server]  :8080
-                       /lobby — team landing (join 1 of 4 teams)
+                       /lobby — team landing (join/add/remove teams, 2-4)
                        /team/{n} — team workspace (contributions, captain, generate)
                        /ws/gamestate — live push to browser
                        /ws/teams, /ws/team/{n} — team state push
@@ -97,16 +97,20 @@ uv run main.py
 ```
 
 Dolphin boots the ISO and idles at the menus. Matches are queued via the
-lobby UI or the API. The lobby is team-based: 4 teams (one per port), each
-with a captain, a character pick, a stack of prompt contributions, and a
-ready toggle. `/api/start` is parameterless — it pulls all 4 teams' state
-from the `TeamRegistry` (`core/teams.py`) and requires all 4 to be ready:
+lobby UI or the API. The lobby is team-based: up to 4 team slots (one per
+port), each with a captain, a character pick, a stack of prompt contributions,
+and a ready toggle. A team's identity IS its port; each slot is **active** or
+**inactive** and the active set can be any subset of `{1,2,3,4}` of size 2-4
+(non-contiguous is fine — e.g. teams 1 and 4). Teams are added/removed from the
+lobby (`POST /api/team/{n}/activate` / `/deactivate`). `/api/start` is
+parameterless — it pulls every ACTIVE team's state from the `TeamRegistry`
+(`core/teams.py`) and requires all active teams (minimum 2) to be ready:
 
 ```bash
 curl -X POST http://localhost:8080/api/start
 ```
 
-The game loop picks the match up at CSS, locks in all four characters,
+The game loop picks the match up at CSS, locks in each active team's character,
 selects Final Destination, and starts. CSS → in-game takes a couple of
 seconds; if cursors visibly overshoot or oscillate, see "Game loop rules"
 below. Poll `GET /api/state` for phase/scores.
@@ -239,10 +243,22 @@ p1.character      # melee.Character enum
 ### Known pitfall: CSS requires ALL connected controllers
 
 If any connected port is not driven through CSS, its cursor floats idle and
-the game never starts. The orchestrator connects all 4 controllers at launch,
-which is why `/api/start` requires exactly 4 players. Call `choose_character`
-for every connected port every frame during
-`menu_state == melee.Menu.CHARACTER_SELECT`.
+the game never starts (Melee's `ready_to_start` only clears once every plugged
+controller has locked in). The orchestrator plugs in exactly the active teams'
+controllers (2-4), so every connected port maps to an active player and
+`/api/start` requires all active teams ready. Call `choose_character` for every
+connected port every frame during `menu_state == melee.Menu.CHARACTER_SELECT`.
+
+**Variable team count → Dolphin relaunch.** Whether a port is plugged
+(Dolphin's `SIDevice`) is read at boot, so changing the active set requires
+relaunching Dolphin. `MeleeOrchestrator.queue_match` is async and calls
+`_reconfigure(ports)` (stop the game loop, `console.stop()`, rebuild the
+Console with STANDARD controllers for active ports and UNPLUGGED for the rest,
+`run` + `connect`, restart the loop) whenever the queued match needs a
+different port set than is currently plugged. Dolphin is therefore kept alive
+across matches with the SAME active set, and only relaunched when it changes
+(OBS re-acquires the "Slippi Dolphin" window automatically). `self._ports`
+holds the current plugged set; there is no fixed 4-port assumption anymore.
 
 ---
 
@@ -365,12 +381,18 @@ Priority when starting a match: captain code override > generated bot > default 
 
 ### Team state (`core/teams.py`)
 
-The `TeamRegistry` singleton holds 4 `TeamState` objects (one per port/team).
-Each team has: a captain (claimed via a client-side localStorage nonce;
-instant takeover with UI confirm), a character pick, a stack of prompt
-contributions from any teammate, an optional code override, a generated bot
-version, and a ready toggle. State is persisted to
-`generated/teams.json` so a page refresh doesn't lose anything mid-session.
+The `TeamRegistry` singleton holds 4 `TeamState` objects (one per port/team),
+each with an `active` flag — the active subset (size 2-4) is the match roster.
+`activate(n)`/`deactivate(n)` toggle it (`deactivate` guards the 2-team
+minimum); `active_ids()` returns the current roster; `all_ready()` is
+count-aware. Fresh installs default to teams 1 & 2 active. Each team has: a
+captain (claimed via a client-side localStorage nonce; instant takeover with UI
+confirm), a character pick, a stack of prompt contributions from any teammate,
+an optional code override, a generated bot version, and a ready toggle. State
+(including `active`) is persisted to `generated/teams.json` so a page refresh
+doesn't lose anything mid-session. `summary()` returns all 4 slots (with
+`active`) so the lobby can render active cards next to inactive "add team"
+placeholders; `reset_all()` preserves the active set.
 `POST /api/teams/reset` clears everything for a fresh round (operator).
 WebSocket push-on-change: `/ws/teams` (landing page, 4-team summary) and
 `/ws/team/{n}` (team workspace, full team state).
@@ -504,15 +526,22 @@ Served by `python main.py` (do not run uvicorn separately — the orchestrator
 would be missing). `main.py` injects the `MeleeOrchestrator` instance into
 `frontend.app._orchestrator` and runs uvicorn in the same event loop.
 
+The full write-up of how the frontend is built (server structure, templates,
+captain/nonce model, WebSocket feeds, how to add a page/route/field) lives in
+the `frontend` skill (`.opencode/skills/frontend/SKILL.md`). Read it before
+touching the dashboard.
+
 Routes (`frontend/app.py`):
-- `GET /lobby` — team landing page: 4 join buttons, live team status, START button (`/` redirects here)
+- `GET /lobby` — team landing page: active team cards + "add team" slots, live team status, START button (`/` redirects here)
 - `GET /team/{n}` — team workspace: captain claim, character pick, contributions stack, assemble & generate, code override, ready toggle
 - `GET /watch` — Twitch stream embed + live team scores
 - `GET /admin` — phase pill, team readiness, end-match / reset-teams buttons
-- `POST /api/start` — queue a match (parameterless; pulls all 4 teams' state from `TeamRegistry`; requires all 4 ready)
+- `POST /api/start` — queue a match (parameterless; pulls every ACTIVE team's state from `TeamRegistry`; requires all active teams ready, min 2)
 - `POST /api/stop` — abort the running match and return to IDLE
-- `POST /api/teams/reset` — clear all team state for a fresh round (operator)
-- `GET /api/teams` — 4-team summary for the landing page
+- `POST /api/team/{n}/activate` — add team n to the active roster (lobby only; max 4)
+- `POST /api/team/{n}/deactivate` — remove team n from the roster (lobby only; min 2)
+- `POST /api/teams/reset` — clear all team state for a fresh round, keeping the active set (operator)
+- `GET /api/teams` — all-4-slot summary (each with `active`) for the landing page
 - `GET /api/team/{n}` — full team state
 - `POST /api/team/{n}/captain` — claim/take over captain (`{nonce, nickname, force?}`)
 - `POST /api/team/{n}/character` — captain sets character
