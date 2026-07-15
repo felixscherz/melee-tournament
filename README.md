@@ -47,7 +47,7 @@ This is the fastest path. Everything runs on your Mac; nothing is exposed public
 
 | What | Why | Get it |
 |---|---|---|
-| **Slippi Dolphin** | `libmelee` needs the Slippi fork, not mainline Dolphin | https://slippi.gg/downloads — move `Slippi Dolphin.app` to `/Applications/` |
+| **Slippi Dolphin** | `libmelee` needs the Slippi fork, not mainline Dolphin | `brew install --cask slippi-dolphin` |
 | **Melee ISO** (NTSC v1.02 / GALE01 r2) | The game itself. You must legally own it | Dump your own disc ([guide](https://wiki.dolphin-emu.org/index.php?title=Ripping_Games)). We cannot provide one. Place at `assets/melee.iso` |
 | **uv** | Manages Python + dependencies (installs its own Python, no Homebrew Python needed) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` (see [uv docs](https://docs.astral.sh/uv/getting-started/installation/)) |
 | **OBS Studio** | Captures Dolphin and streams to Twitch | `brew install --cask obs` |
