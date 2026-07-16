@@ -60,7 +60,7 @@ BANNED_ATTRS = {
     "mro",
 }
 
-MAX_CODE_BYTES = 100_000
+MAX_CODE_BYTES = 16 * 1024 * 1024  # 16 MiB
 
 
 class BotValidationError(ValueError):
