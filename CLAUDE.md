@@ -82,6 +82,23 @@ uv run main.py
 open http://localhost:8080/lobby
 ```
 
+There is also a CLI wrapper (`cli.py`, entry point `smash-tournament` via
+`[project.scripts]`; the project is installed EDITABLE into `.venv` — see the
+comment in `pyproject.toml`). It runs the same server with optional cleanup of
+persisted state beforehand (cleanup logic lives in `core/cleanup.py` and goes
+through the `TeamRegistry` singleton, never raw file edits):
+
+```bash
+uv run smash-tournament serve                # identical to `uv run main.py`
+uv run smash-tournament serve --fresh        # factory-reset all state, then serve
+uv run smash-tournament clean --clear-code   # cleanup only, no server
+```
+
+Flags (combinable, on both subcommands): `--clear-code` (code overrides +
+uploads), `--clear-names`, `--clear-bots` (generated/*.py + latest.json),
+`--reset-teams` (= lobby RESET button), `--fresh` (factory defaults,
+including names and the active set).
+
 ---
 
 ## How to Run the Game Loop
@@ -541,6 +558,7 @@ Routes (`frontend/app.py`):
 - `POST /api/team/{n}/activate` — add team n to the active roster (lobby only; max 4)
 - `POST /api/team/{n}/deactivate` — remove team n from the roster (lobby only; min 2)
 - `POST /api/teams/reset` — clear all team state for a fresh round, keeping the active set (operator)
+- `POST /api/teams/new-round` — soft reset: clear ready flags only, keep captains/contributions/bots (operator)
 - `GET /api/teams` — all-4-slot summary (each with `active`) for the landing page
 - `GET /api/team/{n}` — full team state
 - `POST /api/team/{n}/captain` — claim/take over captain (`{nonce, nickname, force?}`)
@@ -549,8 +567,9 @@ Routes (`frontend/app.py`):
 - `POST /api/team/{n}/contribute` — add a prompt contribution (`{nonce, nickname, text}`)
 - `DELETE /api/team/{n}/contribution/{id}` — remove a contribution (own or captain)
 - `POST /api/team/{n}/code` — captain sets code override
-- `POST /api/team/{n}/prompt-preview` — preview the assembled prompt without generating
-- `POST /api/team/{n}/generate` — assemble + run bot-writer; returns version
+- `POST /api/team/{n}/prompt-preview` — preview the assembled prompt without generating (any teammate)
+- `POST /api/team/{n}/generate` — assemble + run bot-writer; returns version; broadcasts a transient `generating` flag over the team/summary WS while running
+- `GET /api/team/{n}/generated-code` — source of the team's latest generated bot (read-only, any teammate)
 - `POST /api/team/{n}/ready` — captain toggles ready
 - `GET /api/state` — phase, scores (with team_name), winner
 - `WS /ws/gamestate` — 10Hz game state push (stocks, percent, action, team_name)

@@ -23,6 +23,13 @@
     nav a:hover { background: #35355a; color: #c0c0e0; }
     nav a.active { background: #e94560; color: #fff; }
 
+    .you-chip {
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 12px;
+      color: #ffe082; font-family: inherit; font-size: 0.72rem; letter-spacing: 1px;
+      padding: 0.3rem 0.8rem; cursor: pointer; transition: border-color 0.2s;
+    }
+    .you-chip:hover { border-color: #e94560; }
+
     .hero { text-align: center; padding: 2.5rem 1.5rem 1rem; }
     .hero h2 { font-size: 1.4rem; color: #6060a0; letter-spacing: 4px; margin-bottom: 0.5rem; }
     .hero p { font-size: 0.85rem; color: #505070; letter-spacing: 1px; }
@@ -146,6 +153,7 @@
 <body>
 <header>
   <h1>⚔ SMASH TOURNAMENT</h1>
+  <button class="you-chip" id="you-chip" onclick="changeNick()" title="Click to change your nickname">SET NICKNAME</button>
   <nav>
     <a href="/lobby" class="active">LOBBY</a>
     <a href="/watch">WATCH</a>
@@ -174,6 +182,7 @@
     <div class="btn-row">
       <button class="btn btn-start" id="start-btn" onclick="startGame()" disabled>START MATCH</button>
       <button class="btn btn-stop" id="stop-btn" onclick="stopGame()" style="display:none">END MATCH</button>
+      <button class="btn btn-stop" id="newround-btn" onclick="newRound()">NEW ROUND</button>
       <button class="btn btn-reset" id="reset-btn" onclick="resetTeams()">RESET TEAMS</button>
     </div>
     <div id="status"></div>
@@ -194,7 +203,7 @@
     <li>Everyone on the team adds strategy ideas (short prompts). The captain picks the character.</li>
     <li>The captain clicks <strong>ASSEMBLE &amp; GENERATE</strong> to combine all ideas into one bot, or pastes custom code to override.</li>
     <li>Add or remove teams (2-4) with the slots above. Captain hits <strong>READY</strong>; when all active teams are ready, someone presses <strong>START MATCH</strong> here.</li>
-    <li>Watch the carnage on the <a href="/watch" style="color:#e94560">watch page</a>. <code>/api/teams/reset</code> or the RESET TEAMS button starts a fresh round.</li>
+    <li>Watch the carnage on the <a href="/watch" style="color:#e94560">watch page</a>. <strong>NEW ROUND</strong> keeps teams and their ideas and just clears ready flags; <strong>RESET TEAMS</strong> wipes everything for a fresh start.</li>
   </ol>
 </div>
 
@@ -251,7 +260,9 @@ function renderActiveCard(t, activeCount) {
   else if (!t.has_captain) { statusCls = 'nocap'; statusTxt = 'NO CAPTAIN'; }
 
   const capStr = t.captain_name ? `Captain: ${t.captain_name}` : 'No captain yet';
-  const genStr = t.generated_version ? `Bot v${t.generated_version}` : (t.has_code_override ? 'Custom code' : 'Default AI');
+  const genStr = t.generating ? 'Generating bot...'
+    : t.has_code_override ? 'Custom code'
+    : t.generated_version ? `Bot v${t.generated_version}` : 'Default AI';
   // Remove is offered only while the lobby is open and above the 2-team minimum.
   const canRemove = lobbyOpen() && activeCount > 2;
   const removeBtn = canRemove
@@ -397,6 +408,16 @@ async function removeTeam(event, n) {
   } catch (e) { setStatus(e.message, 'err'); }
 }
 
+async function newRound() {
+  if (!confirm('New round? Teams keep captains, contributions, and bots - only ready flags are cleared.')) return;
+  try {
+    const res = await fetch('/api/teams/new-round', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Error');
+    setStatus('New round - teams keep their work, ready flags cleared.', 'ok');
+  } catch (e) { setStatus(e.message, 'err'); }
+}
+
 async function resetTeams() {
   if (!confirm('Reset all teams? This clears captains, contributions, and ready state for a fresh round.')) return;
   try {
@@ -406,6 +427,19 @@ async function resetTeams() {
     setStatus('Teams reset - fresh round ready.', 'ok');
   } catch (e) { setStatus(e.message, 'err'); }
 }
+
+// ---- Identity chip (shared localStorage keys with the team pages) ----
+function getNick() { return localStorage.getItem('smash_nick') || ''; }
+function setNick(v) { localStorage.setItem('smash_nick', v); }
+function renderYou() {
+  const nick = getNick();
+  document.getElementById('you-chip').textContent = nick ? 'YOU: ' + nick : 'SET NICKNAME';
+}
+function changeNick() {
+  const nick = prompt('Your nickname (shown to your team):', getNick());
+  if (nick && nick.trim()) { setNick(nick.trim().slice(0, 24)); renderYou(); }
+}
+renderYou();
 </script>
 </body>
 </html>

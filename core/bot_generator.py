@@ -25,8 +25,15 @@ REPO_ROOT = Path(__file__).parent.parent
 GENERATED_DIR = REPO_ROOT / "generated"
 LATEST_JSON = GENERATED_DIR / "latest.json"
 
-GENERATE_TIMEOUT = 300  # 5 minutes
+GENERATE_TIMEOUT = 300  # 5 minutes, per opencode invocation
 MAX_PROMPT_CHARS = 2000
+
+# The Exxeta/OpenAI-compatible endpoint intermittently ends the agent's turn
+# with an empty completion (typically right after the big skill payloads load).
+# opencode treats a no-tool-call turn as "done" and exits having written
+# nothing. When that happens we nudge the SAME session with "continue" instead
+# of failing - the same thing a human does by hand. This many extra nudges.
+MAX_CONTINUE_ATTEMPTS = 3
 
 
 class GenerateError(Exception):
@@ -122,31 +129,15 @@ def _build_agent_message(
 
 
 _BOT_WRITTEN_RE = re.compile(r"BOT_WRITTEN:\s*(.+)")
+# `--print-logs` writes `message=created id=ses_...` to stderr on session start.
+_SESSION_ID_RE = re.compile(r"message=created id=(ses_\w+)")
 
 
-async def generate_bot(port: int, character: str, prompt: str) -> dict:
-    """Spawn opencode to generate a bot. Returns a result dict.
+async def _run_opencode(cmd: list) -> str:
+    """Run one opencode invocation to completion; return combined stdout+stderr.
 
-    On success: {"ok": True, "path": ..., "version_id": ...}
-    On failure: {"ok": False, "error": ...}
+    Raises GenerateError on a missing binary or a per-invocation timeout.
     """
-    if len(prompt) > MAX_PROMPT_CHARS:
-        raise GenerateError(f"Prompt too long (max {MAX_PROMPT_CHARS} chars)")
-
-    output_path = generate_versioned_path(port, character, prompt)
-    rel = output_path.relative_to(REPO_ROOT)
-    message = _build_agent_message(character, port, prompt, output_path)
-
-    cmd = ["opencode", "run", "--auto", "--agent", "bot-writer"]
-    # Model comes from [opencode] model in settings.toml. If unset, opencode
-    # falls back to the default declared in .opencode/agents/bot-writer.md.
-    model = (load_settings().get("opencode") or {}).get("model", "").strip()
-    if model:
-        cmd += ["--model", model]
-    cmd.append(message)
-
-    log.info("Generating bot for port %d (%s) -> %s", port, character, rel)
-
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -168,22 +159,84 @@ async def generate_bot(port: int, character: str, prompt: str) -> dict:
 
     stdout = stdout_bytes.decode("utf-8", errors="replace")
     stderr = stderr_bytes.decode("utf-8", errors="replace")
+    return stdout + stderr
 
-    # Check for BOT_WRITTEN marker in the output
-    match = _BOT_WRITTEN_RE.search(stdout + stderr)
-    if match:
-        marker_path = match.group(1).strip()
-        marker_full = (
-            REPO_ROOT / marker_path
-            if not Path(marker_path).is_absolute()
-            else Path(marker_path)
-        )
-        if marker_full != output_path:
-            log.warning("Agent wrote to %s, expected %s", marker_full, output_path)
-            output_path = marker_full
+
+async def generate_bot(port: int, character: str, prompt: str) -> dict:
+    """Spawn opencode to generate a bot. Returns a result dict.
+
+    On success: {"ok": True, "path": ..., "version_id": ...}
+    On failure: {"ok": False, "error": ...}
+
+    If the agent ends its turn early without producing the file (a known
+    intermittent glitch of the OpenAI-compatible provider), the same session is
+    resumed with "continue" up to MAX_CONTINUE_ATTEMPTS times before giving up.
+    """
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise GenerateError(f"Prompt too long (max {MAX_PROMPT_CHARS} chars)")
+
+    output_path = generate_versioned_path(port, character, prompt)
+    rel = output_path.relative_to(REPO_ROOT)
+    message = _build_agent_message(character, port, prompt, output_path)
+
+    # `--print-logs` surfaces the session id (needed to resume on an early
+    # stop). --agent and --model must be repeated on every invocation, incl.
+    # the continue nudges: without --agent the resume falls back to the default
+    # agent, and without --model it falls back to the agent-file default model.
+    base = ["opencode", "run", "--print-logs", "--auto", "--agent", "bot-writer"]
+    # Model comes from [opencode] model in settings.toml. If unset, opencode
+    # falls back to the default declared in .opencode/agents/bot-writer.md.
+    model = (load_settings().get("opencode") or {}).get("model", "").strip()
+    if model:
+        base += ["--model", model]
+
+    log.info("Generating bot for port %d (%s) -> %s", port, character, rel)
+
+    combined = ""
+    session_id = None
+    for attempt in range(MAX_CONTINUE_ATTEMPTS + 1):
+        if attempt == 0:
+            cmd = base + [message]
+        else:
+            if session_id is None:
+                # Never learned the session id (start failed) - can't resume.
+                break
+            log.warning(
+                "Bot-writer stopped early for port %d (attempt %d/%d); "
+                "resuming session %s with 'continue'",
+                port,
+                attempt,
+                MAX_CONTINUE_ATTEMPTS,
+                session_id,
+            )
+            cmd = base + ["--session", session_id, "continue"]
+
+        combined += await _run_opencode(cmd)
+
+        if session_id is None:
+            sid_match = _SESSION_ID_RE.search(combined)
+            if sid_match:
+                session_id = sid_match.group(1)
+
+        # Check for a BOT_WRITTEN marker; the agent may have written to a
+        # different path than we asked for.
+        match = _BOT_WRITTEN_RE.search(combined)
+        if match:
+            marker_path = match.group(1).strip()
+            marker_full = (
+                REPO_ROOT / marker_path
+                if not Path(marker_path).is_absolute()
+                else Path(marker_path)
+            )
+            if marker_full != output_path:
+                log.warning("Agent wrote to %s, expected %s", marker_full, output_path)
+                output_path = marker_full
+
+        if output_path.exists():
+            break
 
     if not output_path.exists():
-        tail = (stdout + stderr)[-500:]
+        tail = combined[-500:]
         raise GenerateError(f"Agent did not produce a file. Output tail:\n{tail}")
 
     # Validate the generated code

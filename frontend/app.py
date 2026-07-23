@@ -280,14 +280,31 @@ async def set_code_override(team_id: int, body: dict):
 @app.post("/api/team/{team_id}/prompt-preview")
 async def preview_prompt(team_id: int, body: dict):
     """Assemble the team's contributions into a prompt and return it without
-    generating. Lets the captain preview the merged prompt before committing."""
+    generating. Read-only, so open to the whole team — everyone can see the
+    merged prompt before the captain generates."""
     try:
         t = teams.team(team_id)
-        _require_captain(t, body.get("nonce", ""))
     except TeamError as exc:
         raise _team_error_to_http(exc)
     prompt = assemble_prompt(t.contributions)
     return {"prompt": prompt}
+
+
+@app.get("/api/team/{team_id}/generated-code")
+async def get_generated_code(team_id: int):
+    """Return the source of the team's latest generated bot (read-only,
+    visible to the whole team)."""
+    try:
+        t = teams.team(team_id)
+    except TeamError as exc:
+        raise _team_error_to_http(exc)
+    path = get_generated_path(team_id)
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="No generated bot yet")
+    return {
+        "version": t.generated_version,
+        "code": path.read_text(encoding="utf-8"),
+    }
 
 
 @app.post("/api/team/{team_id}/generate")
@@ -323,15 +340,22 @@ async def generate_team_bot(team_id: int, body: dict):
         )
 
     async with lock:
+        # Broadcast the in-progress flag so every teammate sees the spinner,
+        # not just the captain's browser.
+        teams.set_generating(team_id, True)
+        await teams.broadcast_summary()
+        await teams.broadcast_team(team_id)
         try:
             result = await generate_bot(team_id, t.character, prompt)
             if result.get("ok"):
                 teams.set_generated(team_id, result["version_id"])
-                await teams.broadcast_summary()
-                await teams.broadcast_team(team_id)
             return result
         except GenerateError as exc:
             return {"ok": False, "error": str(exc)}
+        finally:
+            teams.set_generating(team_id, False)
+            await teams.broadcast_summary()
+            await teams.broadcast_team(team_id)
 
 
 @app.post("/api/team/{team_id}/ready")
@@ -383,6 +407,22 @@ async def deactivate_team(team_id: int):
     await teams.broadcast_summary()
     await teams.broadcast_team(team_id)
     return {"ok": True, "active": teams.active_ids()}
+
+
+@app.post("/api/teams/new-round")
+async def new_round():
+    """Soft reset (operator): keep captains, contributions, code overrides,
+    and generated bots — just clear the ready flags for the next match."""
+    if app_state.phase not in (Phase.IDLE, Phase.POSTGAME):
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the running match before starting a new round",
+        )
+    teams.new_round()
+    await teams.broadcast_summary()
+    for n in (1, 2, 3, 4):
+        await teams.broadcast_team(n)
+    return {"ok": True}
 
 
 @app.post("/api/teams/reset")

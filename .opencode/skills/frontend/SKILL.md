@@ -57,6 +57,8 @@ Roster + match:
   roster. Guarded by `_require_lobby_open()` (IDLE/POSTGAME only). Min 2 / max 4.
 - `POST /api/teams/reset` - clear captains/contributions/ready, keep the active
   set. Blocked while a match runs.
+- `POST /api/teams/new-round` - soft reset: clear ready flags only, keep
+  captains/contributions/bots. Blocked while a match runs.
 - `GET /api/state` - `{phase, scores, winner}` from `app_state.to_dict()`.
 
 Team workspace (mostly captain-only):
@@ -67,8 +69,14 @@ Team workspace (mostly captain-only):
 - `POST /api/team/{n}/contribute` (any teammate) / `DELETE .../contribution/{id}`.
 - `POST /api/team/{n}/code` - captain code override; validated inline via
   `core.bot_validator.validate_bot_code`, returns `{ok, error?}`.
-- `POST /api/team/{n}/prompt-preview` / `generate` - assemble contributions and
-  (for generate) run the bot-writer agent under a per-team `asyncio.Lock`.
+- `POST /api/team/{n}/prompt-preview` - assemble contributions into the merged
+  prompt (read-only, open to any teammate).
+- `POST /api/team/{n}/generate` - captain-only; runs the bot-writer agent under
+  a per-team `asyncio.Lock`. While running, a transient `generating` flag (not
+  persisted) is set on the team and broadcast over both WS feeds so every
+  teammate sees progress, then cleared in a `finally`.
+- `GET /api/team/{n}/generated-code` - source of the team's latest generated
+  bot (read-only, open to any teammate).
 - `POST /api/validate` - static-check a pasted bot snippet.
 
 `TeamError` from the registry is mapped to HTTP by `_team_error_to_http`
@@ -116,6 +124,10 @@ There is no login. Identity is a random **nonce** stored in `localStorage`
 (`smash_nonce`, minted by `getNonce()` in `team.html`); the nickname is
 `smash_nick`. The nonce is sent in mutating request bodies and as the
 `?nonce=` query param on `GET /api/team/{n}` and `WS /ws/team/{n}`.
+The nickname is set once via the header "YOU: <nick>" chip (`ensureNick()`
+prompts on first visit to a team page; the chip is click-to-change on lobby
+and team pages) and is reused for contributions and captain claims - there is
+no per-form nickname field.
 
 The server never trusts the nonce as a secret - it only compares it to the
 stored `captain_nonce` to decide `you_are_captain` and to gate captain actions.

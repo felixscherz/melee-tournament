@@ -23,6 +23,13 @@
     nav a:hover { background: #35355a; color: #c0c0e0; }
     nav a.active { background: #e94560; color: #fff; }
 
+    .you-chip {
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 12px;
+      color: #ffe082; font-family: inherit; font-size: 0.72rem; letter-spacing: 1px;
+      padding: 0.3rem 0.8rem; cursor: pointer; transition: border-color 0.2s;
+    }
+    .you-chip:hover { border-color: #e94560; }
+
     .team-banner {
       padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem;
       border-bottom: 1px solid #2a2a4a;
@@ -107,8 +114,6 @@
     .contrib.empty-msg { border-left-color: #2a2a4a; color: #6060a0; font-style: italic; text-align: center; padding: 1rem; }
 
     .contribute-form { margin-top: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; }
-    .contribute-form .row { display: flex; gap: 0.5rem; }
-    .contribute-form .row input[type=text] { flex: 0 0 140px; }
 
     .gen-section { display: flex; flex-direction: column; gap: 0.6rem; }
     .gen-status { font-size: 0.72rem; min-height: 1rem; }
@@ -122,13 +127,21 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    details > summary {
-      cursor: pointer; font-size: 0.72rem; color: #6060a0; letter-spacing: 1px;
-      list-style: none; user-select: none; padding: 0.2rem 0;
-    }
-    details > summary::before { content: '▸ '; }
-    details[open] > summary::before { content: '▾ '; }
     .warn { font-size: 0.68rem; color: #e94560; margin-top: 0.3rem; }
+
+    .bot-source {
+      font-size: 0.65rem; letter-spacing: 1px; padding: 0.15rem 0.6rem; border-radius: 10px;
+      border: 1px solid #2a2a4a; color: #9090b0; margin-left: 0.5rem; vertical-align: middle;
+    }
+    .bot-source.custom { color: #ffe082; border-color: #5a5a2a; background: #1f1f14; }
+    .bot-source.generated { color: #81c784; border-color: #2a5a2a; background: #1a2a1a; }
+    .code-view {
+      background: #11112a; border: 1px solid #2a2a4a; border-radius: 4px;
+      padding: 0.6rem 0.8rem; font-family: 'Courier New', monospace; font-size: 0.75rem;
+      line-height: 1.4; color: #cfe8cf; white-space: pre; overflow-x: auto;
+      max-height: 320px; overflow-y: auto; tab-size: 4;
+    }
+    .code-empty { font-size: 0.75rem; color: #6060a0; font-style: italic; padding: 0.5rem 0; }
 
     .ready-bar { display: flex; align-items: center; gap: 0.8rem; }
     .ready-indicator {
@@ -162,6 +175,7 @@
 <body>
 <header>
   <h1>⚔ SMASH TOURNAMENT</h1>
+  <button class="you-chip" id="you-chip" onclick="changeNick()" title="Click to change your nickname">SET NICKNAME</button>
   <nav>
     <a href="/lobby">LOBBY</a>
     <a href="/watch">WATCH</a>
@@ -209,41 +223,44 @@
       <div class="contrib empty-msg">No contributions yet. Be the first to add a strategy idea!</div>
     </div>
     <div class="contribute-form">
-      <div class="row">
-        <input type="text" id="contrib-nick" maxlength="24" placeholder="Your nickname"/>
-      </div>
       <textarea id="contrib-text" maxlength="1000" placeholder="Describe a strategy idea for the bot, e.g. 'play defensively and shield-grab, edgeguard with down-tilt'"></textarea>
       <button class="btn btn-green" id="contrib-btn" onclick="addContribution()">ADD CONTRIBUTION</button>
+      <div style="font-size:0.65rem; color:#505070;">Posts under your nickname (top right). Ctrl+Enter to submit.</div>
     </div>
   </div>
 
   <!-- Generate -->
   <div class="card">
-    <h3>ASSEMBLE &amp; GENERATE BOT (captain only)</h3>
+    <h3>ASSEMBLE &amp; GENERATE BOT</h3>
     <div class="gen-section">
       <div id="gen-status" class="gen-status"></div>
       <button class="btn btn-yellow" id="preview-btn" onclick="previewPrompt()" disabled>PREVIEW ASSEMBLED PROMPT</button>
       <button class="btn btn-primary" id="generate-btn" onclick="generateBot()" disabled>ASSEMBLE &amp; GENERATE</button>
+      <button class="btn btn-ghost" id="view-gen-btn" onclick="viewGeneratedCode()" style="display:none;">VIEW GENERATED CODE</button>
       <div style="font-size:0.68rem; color:#505070; margin-top:0.3rem;">
         Combines all contributions into one prompt and sends it to the bot-writer agent. Takes 30s-5min.
+        Anyone can preview the assembled prompt; only the captain can generate.
       </div>
     </div>
   </div>
 
-  <!-- Code override -->
+  <!-- Bot code (captain edits, everyone sees) -->
   <div class="card">
-    <details id="code-details">
-      <summary>CAPTAIN CODE OVERRIDE (optional — overrides generated bot)</summary>
-      <div class="warn">If you paste code here, it takes priority over the team's prompt-generated bot at match start.</div>
+    <h3>BOT CODE <span class="bot-source" id="bot-source">DEFAULT AI</span></h3>
+    <div style="font-size:0.68rem; color:#505070; margin-bottom:0.6rem;">
+      Match priority: pasted code &gt; generated bot &gt; default AI. Only the captain can edit; the whole team sees the saved code.
+    </div>
+    <pre class="code-view" id="code-view" style="display:none;"></pre>
+    <div class="code-empty" id="code-empty">No code pasted yet — the team will use the generated bot (or default AI).</div>
+    <div id="code-edit" style="display:none;">
       <textarea class="code-area" id="code-override" spellcheck="false" maxlength="16777216"
-                placeholder="Paste a Python Bot class here. See the guide on the lobby page."
-                style="margin-top:0.5rem;"></textarea>
+                placeholder="Paste a Python Bot class here. See the guide on the lobby page."></textarea>
       <div style="display:flex; gap:0.5rem; margin-top:0.4rem;">
         <button class="btn btn-sm btn-green" id="code-save-btn" onclick="saveCode()">SAVE CODE</button>
         <button class="btn btn-sm btn-ghost" onclick="clearCode()">CLEAR CODE</button>
       </div>
       <div class="gen-status" id="code-status"></div>
-    </details>
+    </div>
   </div>
 
   <!-- Ready -->
@@ -259,14 +276,14 @@
   </div>
 </main>
 
-<!-- Preview modal -->
+<!-- Preview modal (assembled prompt or generated bot code) -->
 <div class="modal-overlay" id="preview-modal" onclick="if(event.target===this)closePreview()">
   <div class="modal">
-    <h3>ASSEMBLED PROMPT PREVIEW</h3>
+    <h3 id="modal-title">ASSEMBLED PROMPT PREVIEW</h3>
     <pre id="preview-text"></pre>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closePreview()">CLOSE</button>
-      <button class="btn btn-primary" onclick="closePreview(); generateBot()">GENERATE</button>
+      <button class="btn btn-primary" id="modal-generate-btn" onclick="closePreview(); generateBot()">GENERATE</button>
     </div>
   </div>
 </div>
@@ -289,6 +306,19 @@ function getNick() {
 }
 function setNick(v) {
   localStorage.setItem('smash_nick', v);
+}
+function renderYou() {
+  const nick = getNick();
+  document.getElementById('you-chip').textContent = nick ? 'YOU: ' + nick : 'SET NICKNAME';
+}
+function changeNick() {
+  const nick = prompt('Your nickname (shown to your team):', getNick());
+  if (nick && nick.trim()) { setNick(nick.trim().slice(0, 24)); renderYou(); }
+}
+// Returns the nickname, prompting once if not set yet.
+function ensureNick() {
+  if (!getNick()) changeNick();
+  return getNick();
 }
 
 // ---- State ----
@@ -364,30 +394,59 @@ function render(s) {
     }
   }
 
-  // Nick field
-  const nickField = document.getElementById('contrib-nick');
-  if (!nickField.value) nickField.value = getNick();
-
-  // Generate buttons (captain only, need contributions)
-  const canGen = isCaptain && s.contributions.length > 0;
-  document.getElementById('preview-btn').disabled = !canGen;
+  // Generate buttons: preview for anyone with contributions, generate captain-only
+  const canGen = isCaptain && s.contributions.length > 0 && !s.generating;
+  document.getElementById('preview-btn').disabled = s.contributions.length === 0;
   document.getElementById('generate-btn').disabled = !canGen;
+  document.getElementById('view-gen-btn').style.display = s.generated_version ? '' : 'none';
 
-  // Gen status
+  // Gen status — the `generating` flag is broadcast to the whole team
   const genStatus = document.getElementById('gen-status');
-  if (s.generated_version) {
+  if (s.generating) {
+    genStatus.innerHTML = '<span class="spinner"></span>Generating bot... (this can take a few minutes)';
+    genStatus.className = 'gen-status info';
+  } else if (s.generated_version) {
     genStatus.textContent = 'Generated bot ready (version ' + s.generated_version + ')';
     genStatus.className = 'gen-status ok';
+  } else if (genStatus.classList.contains('info')) {
+    // Generation ended without a version (failed) and no local error was set.
+    genStatus.textContent = '';
+    genStatus.className = 'gen-status';
   }
 
-  // Code override
-  const codeArea = document.getElementById('code-override');
-  if (isCaptain && codeArea.value !== s.code_override && !codeArea.dataset.touched) {
-    codeArea.value = s.code_override;
+  // Bot source pill (visible to everyone)
+  const srcEl = document.getElementById('bot-source');
+  if (s.has_code_override) {
+    srcEl.textContent = 'CUSTOM CODE'; srcEl.className = 'bot-source custom';
+  } else if (s.generated_version) {
+    srcEl.textContent = 'GENERATED v' + s.generated_version; srcEl.className = 'bot-source generated';
+  } else {
+    srcEl.textContent = 'DEFAULT AI'; srcEl.className = 'bot-source';
   }
-  if (!isCaptain) codeArea.disabled = true; else codeArea.disabled = false;
-  const codeDetails = document.getElementById('code-details');
-  if (s.has_code_override && !codeDetails.open) codeDetails.open = true;
+
+  // Bot code: captain gets the editor, everyone else a read-only view.
+  const codeArea = document.getElementById('code-override');
+  const codeView = document.getElementById('code-view');
+  const codeEmpty = document.getElementById('code-empty');
+  const codeEdit = document.getElementById('code-edit');
+  if (isCaptain) {
+    codeEdit.style.display = '';
+    codeView.style.display = 'none';
+    codeEmpty.style.display = 'none';
+    if (codeArea.value !== s.code_override && !codeArea.dataset.touched) {
+      codeArea.value = s.code_override;
+    }
+  } else {
+    codeEdit.style.display = 'none';
+    if (s.has_code_override) {
+      codeView.textContent = s.code_override;
+      codeView.style.display = '';
+      codeEmpty.style.display = 'none';
+    } else {
+      codeView.style.display = 'none';
+      codeEmpty.style.display = '';
+    }
+  }
 
   // Ready
   const readyInd = document.getElementById('ready-indicator');
@@ -418,12 +477,8 @@ async function api(path, method, body) {
 
 async function claimCaptain(force, abdicate) {
   const nonce = getNonce();
-  let nick = getNick();
-  if (!nick) {
-    nick = prompt('Enter your nickname (this will be shown to your team):');
-    if (!nick) return;
-    setNick(nick);
-  }
+  const nick = ensureNick();
+  if (!nick) return;
   try {
     if (abdicate) {
       if (!confirm('Abdicate as captain? Someone else can take over.')) return;
@@ -466,10 +521,10 @@ async function updateCharacter() {
 }
 
 async function addContribution() {
-  const nick = document.getElementById('contrib-nick').value.trim();
   const text = document.getElementById('contrib-text').value.trim();
   if (!text) { setStatus('Write something first.', 'err'); return; }
-  if (nick) setNick(nick);
+  const nick = ensureNick();
+  if (!nick) { setStatus('Set a nickname first (top right).', 'err'); return; }
   try {
     const data = await api(`/api/team/${TEAM_ID}/contribute`, 'POST', { nonce: getNonce(), nickname: nick, text });
     document.getElementById('contrib-text').value = '';
@@ -493,10 +548,26 @@ async function previewPrompt() {
       body: JSON.stringify({ nonce: getNonce() }),
     });
     const data = await res.json();
+    document.getElementById('modal-title').textContent = 'ASSEMBLED PROMPT PREVIEW';
     document.getElementById('preview-text').textContent = data.prompt || '(empty)';
+    // Only the captain gets the GENERATE shortcut in the modal.
+    document.getElementById('modal-generate-btn').style.display = isCaptain ? '' : 'none';
     document.getElementById('preview-modal').classList.add('show');
   } catch (e) { setStatus('Could not preview prompt', 'err'); }
 }
+
+async function viewGeneratedCode() {
+  try {
+    const res = await fetch(`/api/team/${TEAM_ID}/generated-code`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'No generated bot yet');
+    document.getElementById('modal-title').textContent = 'GENERATED BOT (version ' + (data.version || '?') + ')';
+    document.getElementById('preview-text').textContent = data.code;
+    document.getElementById('modal-generate-btn').style.display = 'none';
+    document.getElementById('preview-modal').classList.add('show');
+  } catch (e) { setStatus(e.message || 'Could not load generated code', 'err'); }
+}
+
 function closePreview() {
   document.getElementById('preview-modal').classList.remove('show');
 }
@@ -539,8 +610,10 @@ async function saveCode() {
       document.getElementById('code-status').textContent = data.error || 'Invalid code';
       document.getElementById('code-status').className = 'gen-status err';
     } else {
-      document.getElementById('code-status').textContent = 'Code saved.';
+      document.getElementById('code-status').textContent = 'Code saved — visible to the whole team.';
       document.getElementById('code-status').className = 'gen-status ok';
+      // Saved state now matches the server; let WS snapshots sync again.
+      delete document.getElementById('code-override').dataset.touched;
     }
   } catch (e) {
     document.getElementById('code-status').textContent = e.detail;
@@ -566,6 +639,14 @@ document.getElementById('code-override').addEventListener('input', function() {
   this.dataset.touched = '1';
 });
 
+// Ctrl/Cmd+Enter submits a contribution
+document.getElementById('contrib-text').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    addContribution();
+  }
+});
+
 // ---- WebSocket: push-on-change team state ----
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -580,6 +661,10 @@ connect();
 
 // ---- Initial fetch (WS sends a snapshot too, but this covers the race) ----
 fetch(`/api/team/${TEAM_ID}?nonce=${encodeURIComponent(getNonce())}`).then(r => r.json()).then(render).catch(() => {});
+
+// ---- Identity chip: ask for a nickname once on first visit ----
+renderYou();
+if (!getNick()) setTimeout(ensureNick, 400);
 </script>
 </body>
 </html>

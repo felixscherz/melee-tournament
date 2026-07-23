@@ -19,12 +19,27 @@ dependencies = [
     "websockets>=12.0",
 ]
 
+[project.scripts]
+smash-tournament = "cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [tool.uv]
-# Application, not a library: don't build/install the project itself, only its
-# dependencies. Run via `uv run main.py`. The virtualenv lives at ./.venv (the
-# default) so the bot subprocess sandbox (sys.executable), OBS, and stream-vpn.sh
-# all keep working unchanged.
-package = false
+# Installed EDITABLE into ./.venv so the `smash-tournament` entry point exists.
+# Editable keeps __file__ inside the repo, so the REPO_ROOT-relative paths,
+# the bot subprocess sandbox (sys.executable), OBS, and stream-vpn.sh all keep
+# working unchanged. `uv run main.py` also still works.
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "frontend"]
+
+# Top-level modules (flat layout) that must ship alongside the packages.
+[tool.hatch.build.targets.wheel.force-include]
+"main.py" = "main.py"
+"cli.py" = "cli.py"
 
 [dependency-groups]
 dev = [

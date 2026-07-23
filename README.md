@@ -95,6 +95,20 @@ orchestrator in one event loop and launches Dolphin for you. **Do not run uvicor
 separately.** `uv run` resolves the interpreter and dependencies from
 `pyproject.toml` / `uv.lock` automatically; no manual venv activation needed.
 
+There is also a CLI wrapper with optional cleanup of persisted state
+(team names, captains, contributions, pasted code, generated bots):
+
+```bash
+uv run smash-tournament serve                # same as `uv run main.py`
+uv run smash-tournament serve --fresh        # factory-reset all state, then serve
+uv run smash-tournament clean --clear-code   # cleanup only, no server
+uv run smash-tournament clean --help         # all cleanup flags
+```
+
+Cleanup flags (combinable, work on both `serve` and `clean`): `--clear-code`,
+`--clear-names`, `--clear-bots`, `--reset-teams` (like the lobby's RESET
+button), `--fresh` (everything back to factory defaults).
+
 Then open the lobby, pick 4 characters, and start a match:
 
 ```

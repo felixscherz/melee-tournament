@@ -72,6 +72,9 @@ class TeamState:
     code_override: str = ""
     generated_version: Optional[str] = None
     ready: bool = False
+    # Transient: True while a bot generation is running for this team. Not
+    # persisted, so a crash mid-generation can't leave a stale flag.
+    generating: bool = False
 
     def to_dict(self, my_nonce: str = "") -> dict:
         return {
@@ -94,6 +97,7 @@ class TeamState:
             "code_override": self.code_override,
             "has_code_override": bool(self.code_override.strip()),
             "generated_version": self.generated_version,
+            "generating": self.generating,
             "ready": self.ready,
             "contrib_count": len(self.contributions),
         }
@@ -114,6 +118,7 @@ class TeamState:
             "contrib_count": len(self.contributions),
             "has_code_override": bool(self.code_override.strip()),
             "generated_version": self.generated_version,
+            "generating": self.generating,
             "ready": self.ready,
         }
 
@@ -288,12 +293,24 @@ class TeamRegistry:
 
     # ---- generation result ----
 
+    def set_generating(self, n: int, generating: bool) -> TeamState:
+        """Transient in-progress flag (not persisted); caller broadcasts."""
+        self._require_valid(n)
+        self._teams[n].generating = bool(generating)
+        return self._teams[n]
+
     def set_generated(self, n: int, version_id: str) -> TeamState:
         self._require_valid(n)
         t = self._teams[n]
         t.generated_version = version_id
         self._save()
         return t
+
+    def clear_generated(self, n: int) -> TeamState:
+        self._require_valid(n)
+        self._teams[n].generated_version = None
+        self._save()
+        return self._teams[n]
 
     # ---- ready ----
 
@@ -304,6 +321,21 @@ class TeamRegistry:
         return self._teams[n]
 
     # ---- reset ----
+
+    def wipe_all(self) -> None:
+        """Factory reset: every slot back to defaults — names, characters,
+        captains, contributions, code, and the active set. Unlike
+        `reset_all`, custom team names and the active roster are NOT kept."""
+        self._teams = {i: _new_team(i) for i in TEAM_IDS}
+        self._save()
+
+    def new_round(self) -> None:
+        """Soft reset between matches: clear ready flags only, keeping
+        captains, contributions, code overrides, and generated bots so teams
+        can iterate round over round."""
+        for i in TEAM_IDS:
+            self._teams[i].ready = False
+        self._save()
 
     def reset_all(self) -> None:
         for i in TEAM_IDS:
